@@ -5,7 +5,7 @@
 #include <opencv2/opencv.hpp>
 
 #include "tools/types.h"
-#include "cam.h"
+#include "tools/cam.h"
 #include "kalman/caKalman.h"
 
 int main() {
@@ -21,8 +21,6 @@ int main() {
     while (true) {
         const auto key = cv::waitKey(1);
         if (usbCam.getFrame(frame)) {
-
-
             //NOTE 帧率显示部分 程序帧率
             ++frame_count;
             // 计算时间差（秒）

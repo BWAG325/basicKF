@@ -7,16 +7,17 @@ find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
 
 include_directories(${EIGEN3_INCLUDE_DIRS})
-# 现代CMake推荐使用target_include_directories
-file(GLOB SOURCES "src/*.cpp")  # 只收集.cpp文件
-file(GLOB HEADERS "include/*.h")  # 头文件
+# 注意要使用递归去寻找文件
+file(GLOB_RECURSE SOURCES "src/*.cpp")  # 只收集.cpp文件
+file(GLOB_RECURSE HEADERS "include/*.h")  # 头文件
 
-add_executable(Test
+add_executable(${PROJECT_NAME}
         ${SOURCES}
 )
-target_include_directories(Test PRIVATE
+target_include_directories(${PROJECT_NAME} PUBLIC
         ${OpenCV_INCLUDE_DIRS}
+        ${EIGEN3_INCLUDE_DIRS}
         include
 )
 
-target_link_libraries(Test PRIVATE ${OpenCV_LIBS})
+target_link_libraries(${PROJECT_NAME} PRIVATE ${OpenCV_LIBS})

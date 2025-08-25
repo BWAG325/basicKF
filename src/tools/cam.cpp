@@ -2,9 +2,9 @@
 // Created by mmz on 25-7-12.
 //
 
-#include "cam.h"
+#include "tools/cam.h"
 
-Cam::Cam(const int id): camID(id), emptyFrame(true), stopFlag(false) {
+Cam::Cam(const int id) : camID(id), emptyFrame(true), stopFlag(false) {
     seeTimeCost = false;
     //TODO 增加参数设置接口，并支持启动过程中热切换
     frameRate = 200;

@@ -38,8 +38,6 @@ public:
     explicit Cam(int id);
     ~Cam();
 
-
-
     void startThread();
 
     bool getFrame(cv::Mat& mat);
