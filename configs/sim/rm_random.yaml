@@ -1,0 +1,47 @@
+# 随机运动：每段控制随机抽参数，同 seed 完全可复现
+
+sim:
+  min_dt: 0.001        # 仿真器最小时间分辨率 [s]
+
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+
+initial:
+  position: [0.0, 0.0, 0.18]
+  velocity: [0.0, 0.0, 0.0]
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  spin_phase: 0.0
+
+random:
+  seed: 7
+  duration: [0.4, 1.5]        # 每段控制持续多久 [s]
+  accel: [-2.0, 2.0]          # 切向加速度范围
+  turn_rate: [-1.2, 1.2]      # 偏航角速度范围
+  pitch_rate: [-0.3, 0.3]     # 俯仰角速度范围（3D 爬升/俯冲）
+  roll_rate: [-0.2, 0.2]      # 翻滚角速度范围
+  spin_rate: [-10.0, 10.0]    # 自转角速度范围
+
+sensor:
+  schedule:
+    t0: 0.0
+    interval: 0.04      # 名义帧间隔 [s]
+    jitter: 0.015       # 每帧 ±抖动，模拟实车非均匀观测
+  seed: 11
+  position_sigma: [0.01, 0.01, 0.01]
+  normal_sigma: 0.01
+  dropout: 0.05
+  max_range: 20.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [3.0, -6.0, 2.0]
+    target: [2.5, 0.0, 0.2]
+    fov_half_deg: 40.0
+    output_in_camera_frame: false

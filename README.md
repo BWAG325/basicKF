@@ -1,7 +1,32 @@
-# basicKF / sim —— RM 车辆运动模拟器
+# basicKF / sim —— RM 车辆 3D 运动仿真器
 
-纯数据的三维运动模拟器：给定任意时刻 `t`，直接算出车体真值 + 每块装甲板真值 + 带噪观测。
-不依赖相机、不依赖图像，也不依赖卡尔曼部分。
+按「**当前状态 + 控制量 + dt**」推进的增量式仿真器：不预算轨迹，每调用一次才算一步。
+姿态是**四元数**，速度沿车体 +x，装甲板随车体姿态旋转。
+
+## 轨迹可视化
+
+```bash
+# 先用 sim_demo 导出 CSV（每帧真值 + 观测）
+./build/sim_demo -c=configs/sim/rm_circle.yaml --duration=6 --min-dt=0.0005 > build/traces/circle.csv
+python3 tools/plot_traces.py
+```
+
+生成三个文件（都在 `build/traces/`）：
+
+| 文件 | 内容 |
+|---|---|
+| `traces.png` | 静态四宫格 3D 轨迹 |
+| `traces.html` | 交互式俯视图（缩放/悬停/时间滑块） |
+| `traces3d.html` | **交互式 3D 视图**（拖动旋转、滚轮缩放、Shift+拖动平移） |
+
+3D 页面是手写的投影 + 画家算法，无外部依赖，直接浏览器打开即可。
+
+## 两个 dt，别混
+
+| 名字 | 在哪 | 作用 |
+|---|---|---|
+| `sim.min_dt` | `Simulator` | **积分步长上限**：`advanceTo` 按它把时间切小步，位置用 Simpson 积分 |
+| `sensor.schedule` | 观测时刻表 | **两次观测的间隔**：名义间隔 + 抖动，或显式间隔列表；和 `min_dt` 完全独立 |
 
 ## 构建 / 运行
 
@@ -9,99 +34,159 @@
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build -j4
 
-./build/sim_demo --config configs/sim/rm_straight_spin.yaml --t 2.2
-./build/sim_demo --config configs/sim/rm_straight_spin.yaml --dump 0 5 0.01 > run.csv
-./build/sim_contract_test          # 或 cd build && ctest
+./build/sim_demo                                        # 无参数：默认配置，推进到 t=2.2 打一帧
+./build/sim_demo -c=configs/sim/rm_random.yaml --t=1.0  # 换配置
+./build/sim_demo --duration=2.0 --min-dt=0.001          # 按观测时刻表输出 CSV
+cd build && ctest
 ```
 
-## 对外接口
+参数用 `cv::CommandLineParser`（与 `auto_aim_/tests` 同一套写法），OpenCV 的约定是 `key=value`：
+
+```bash
+sim_demo -c=configs/sim/rm_straight_spin.yaml --t=2.2
+sim_demo --duration=5 --min-dt=0.001
+```
+
+写错成 `-c path`（空格）会被解析成布尔 flag，程序会直接提示正确写法。
+
+## 运行模型
 
 ```cpp
-sim::SimSetup setup = sim::loadSimSetup("configs/sim/xxx.yaml");   // 场景 + 传感器
-const sim::Scene& scene = setup.scene;
+auto setup = sim::loadSimSetup("configs/sim/xxx.yaml");
+sim::Simulator sim(setup.geometry, setup.initial, std::move(setup.controller), setup.min_dt);
 sim::GaussianSensor sensor(setup.sensor);
 
-sim::RobotTruth tr = scene.truthAt(t);                 // 纯函数、任意 t、可重入
-sim::ObservationTruth anno;                            // 仅评估用，滤波器禁止读
-sim::Observation obs = sensor.observeAt(tr, t, &anno);
+const auto times = sim::makeObservationTimes(setup.sensor, frames);
+for (std::size_t k = 0; k < times.size(); ++k) {
+    sim::RobotTruth tr = sim.advanceTo(times[k]);                  // 精确停在观测时刻
+    sim::Observation obs = sensor.observeAt(tr, times[k], k);      // k = 第几帧
+}
 ```
 
-- `truthAt(t)`：`t` 会被 clamp 到 `[0, duration]`；不抛异常、不改内部状态。
-- `observeAt(...)`：随机数由 `(seed, 采样序号, 通道)` 哈希决定，**与求值顺序无关**。
-- `obs` 里**没有**装甲板编号（真实 PnP 也拿不到）；`anno.armor_index` 只用于评估。
+- `advanceTo(t)`：推进到绝对时刻，内部按 `min_dt` 与控制段边界切分；
+- `step(dt)`：相对推进，等价于 `advanceTo(t + dt)`；
+- `step(dt, control)`：显式控制，忽略 `duration`、不消耗计划队列（键盘用这个）。
 
-## 计算时机（重要）
+## 运动模型（3D）
 
-构建期**只登记段**（时长 / jump / primitive），一次数值运算都不做，也不缓存任何入口状态。
-`at(t)` 在查询时才从初值起，把 `t` 所在段之前的段逐段推过去，再解析求本段：
+| 量 | 定义 |
+|---|---|
+| 位置 / 速度 | 世界系 `p, v`；**速度始终沿车体 +x**（无侧滑） |
+| 姿态 | 单位四元数 `q`（body → world），角速度 `ω` 在 **body 系** |
+| 速率 | 标量 `speed = v·(q·x̂)`，可被 accel / jerk 改变，减到 0 停住不倒车 |
+| 装甲环 | 车体系内绕 z 排一圈，环角 = `spin_phase` + i·90°，再被 `q` 旋转到世界系 |
+
+积分：
 
 ```text
-at(t):  t ——二分——> 段 i
-        s = initial
-        for k < i:  s = addDelta(s, jump_k);  s = prim_k.eval(s, dur_k)
-        s = addDelta(s, jump_i);  return prim_i.eval(s, t - t0_i)
+q(t+τ) = q(t) ⊗ exp(ω·τ)          // body 系恒角速度，精确解
+s(τ)   = s0 + accel·τ + ½·jerk·τ²
+p     += ∫ s(τ)·(q(τ)·x̂) dτ      // Simpson 三点，步长 = min_dt
 ```
 
-- 复杂度 = O(`t` 之前的段数)，不是 O(`t/dt`)，也没有逐帧累加；
-- 没有缓存、没有可变状态 → 乱序查询、重复查询、多线程查询都一致；
-- 实测 5001 帧（含观测）14 ms；`tests` 里的 `testQueryTimeCompute` 用计数 primitive
-  钉死这条契约：`add()` 阶段 eval 次数必须为 **0**，t 落在第 i 段时折叠次数必须为 **i+1**。
+所以 `min_dt` 现在**真正影响精度**（越小越准），但同一控制段内按不同 `dt` 推进的结果仍然一致。
 
-## 约定
+## 控制量（都在车体系）
 
-| 项 | 约定 |
-|---|---|
-| 坐标系 | 世界系，右手，z 向上；单位 m / s / rad |
-| 平移 | `chassis.p` 是车体旋转轴上的点，z 通常取装甲板中心高度 |
-| 装甲板 | 中心 = `p + R_z(ring + i·2π/n)·(radius, 0, 0) + (0,0,armor_dz)` |
-| 环角 | `ring = yaw + spin_phase`，两种自转语义都成立 |
-| 自转语义 | `body_rotation`：整车转，`chassis.yaw` 含自转；`armor_orbit`：车体朝向独立 |
-| 相位 | `spin_phase` 对外折到 (-π, π]，`spin_phase_raw` 连续累加 |
+| 字段 | 含义 | 取 0 时 |
+|---|---|---|
+| `accel` | 沿车体 +x 的加速度 [m/s²] | 匀速 |
+| `jerk` | 沿车体 +x 的加加速度 [m/s³] | 匀加速 |
+| `angular_rate` | body 系角速度 `[roll, pitch, yaw]` [rad/s] | 姿态不变 |
+| `spin_rate` | 装甲环相对车体的自转 [rad/s] | 环不转 |
+| `duration` | 本段持续多久 [s] | —— |
 
-## YAML 结构
+YAML 里 `angular_rate: [x, y, z]` 也可以拆成 `roll_rate / pitch_rate / turn_rate` 三个标量。
+小陀螺就是 `angular_rate: [0, 0, 9]`（整车绕 z 转），和 `spin_rate`（环相对车体转）是两件事。
+
+## 预设模式
 
 ```yaml
-robot:   {armors, armor_radius, armor_dz, armor_width, armor_height, body_radius, spin_mode}
-initial: {position: [x,y,z], velocity: [vx,vy,vz], yaw, yaw_rate, spin_phase, spin_rate}
-translation:            # 平移自由度
-  - {type: hold,  duration: 0.5}
-  - {type: accel, duration: 1.0, accel: 2.5}                 # 可负（减速到 0 后停住）
-  - {type: line,  duration: 1.8, speed: 2.5, heading: 0.0}   # speed/heading 省略 = 继承
-  - {type: arc,   duration: 1.2, speed: 2.5, omega: 1.2}     # 恒定航向角速度
-  - {type: brake, duration: 0.5, decel: 5.0}                 # 沿当前速度方向刹停
-yaw:                   # 车体朝向（与平移解耦）
-  - {type: hold, duration: 5.0}     # 另有 rate / ramp
-spin:                  # 装甲板自转
-  - {type: off,  duration: 0.5}     # 另有 rate / ramp（from 省略 = 继承）
-sensor: {dt, seed, position_sigma: [sx,sy,sz], yaw_sigma, dropout, max_range,
-         facing_min_cos, camera: {enabled, position, target, fov_half_deg, output_in_camera_frame}}
+preset:
+  name: circle        # idle / straight / circle
+  speed: 2.0
+  radius: 1.0         # 负值 = 顺时针
+  accel: 2.0
+  duration: 6.0
 ```
 
-分段之间默认按「上一段出口状态」续接，所以 `speed/heading/rate` 省略即 C1 连续；
-需要真实存在的跳变（例如受击掉速）就在该段写 `jump_velocity: [dx, dy, dz]`。
+加新预设：在 `src/preset.cpp` 写一个生成函数，再在 `makePresetControls` 和 `presetNames()` 里各加一行。
+
+## 观测时刻表（非均匀）
+
+```yaml
+sensor:
+  schedule:
+    t0: 0.0
+    interval: 0.04
+    jitter: 0.015
+    # intervals: [0.05, 0.02, 0.08]
+```
+
+噪声/丢帧的钥匙是**帧号**（不是时间轴），所以帧间隔怎么抖都不影响可复现性。
+
+## 代码结构
+
+| 文件 | 职责 |
+|---|---|
+| [types.hpp](include/sim/types.hpp) | `Control` / `RobotState` / `RobotTruth` / `Observation` |
+| [integrator.hpp](include/sim/integrator.hpp) | 四元数姿态 + Simpson 位置积分 |
+| [controller.hpp](include/sim/controller.hpp) | `IController` + `PlanController` + `RandomController`（键盘预留） |
+| [simulator.hpp](include/sim/simulator.hpp) / [simulator.cpp](src/simulator.cpp) | 状态机、`step` / `advanceTo`、`truth()` |
+| [robot_model.hpp](include/sim/robot_model.hpp) | 车体系装甲环 → 世界系位姿（纯函数） |
+| [sensor.hpp](include/sim/sensor.hpp) / [sensor.cpp](src/sensor.cpp) | 观测时刻表 + 位置/法向噪声 |
+| [config.hpp](include/sim/config.hpp) / [config.cpp](src/config.cpp) | YAML 装配 |
+
+## 键盘控制（预留，未实现）
+
+```cpp
+class KeyboardController : public sim::IController {
+public:
+    sim::Control next(const sim::RobotState&) override {
+        sim::Control c;
+        c.accel = key_w ? 2.0 : key_s ? -2.0 : 0.0;
+        c.angular_rate = sim::Vec3(key_q ? 1.0 : 0.0,      // roll
+                                   key_r ? 1.0 : 0.0,      // pitch
+                                   key_a ? 1.0 : key_d ? -1.0 : 0.0);
+        c.duration = 0.05;
+        return c;
+    }
+};
+```
+
+## 观测
+
+`sensor.observeAt(truth, t, frame_index)`：
+
+1. 丢帧：`hash(seed, frame_index)`；
+2. 选板：量程 + FOV + 法向朝向，取 `facing_cos` 最大的一块；
+3. 噪声：位置三维高斯；法向用**小角度旋转矢量**扰动（保证单位向量）。
+
+`Observation` 里是 `p + n`（没有装甲板编号）；编号只在旁注 `ObservationTruth` 里。
 
 ## 契约测试（`tests/sim_contract_test.cpp`）
 
-这些不是「跑通就算过」的测试，而是接口必须永远成立的性质：
-
-1. 乱序求值与顺序求值逐位一致；
-2. 构建期零计算：`add()` 期间 eval 次数为 0；查询时只折叠 `t` 之前的段（i+1 次）；
-3. 平移/旋转 primitive 的解析式（直线、等加速、圆弧）与闭式解一致；
-4. `v == dp/dt`、`a == dv/dt`（中心差分对拍）；
-5. `spin_phase_raw == ∫ω dt`（数值积分对拍）；
-6. C1 场景零告警；运动段后接 `hold` 必须报未声明跳变；显式 `jump` 不告警；
-7. 跨 2π 时装甲板位置连续；`t` 越界 clamp；
-8. 装甲板几何（半径、90° 间隔、法向与 yaw 一致）；
-9. 两种自转语义下装甲环角度一致、`chassis.yaw` 语义按配置不同；
-10. 观测噪声均值/标准差与配置一致、`R` 由观测层给出；
-11. 观测与求值顺序无关、同 t 重复求值一致；
-12. 丢帧比例 ≈ 配置值、`triggeredAt` 只在采样网格上触发；
-13. 相机系输出时 `|p|` 等于到相机距离且 `z > 0`；
-14. 示例 YAML 能装配出无告警场景。
+1. 匀加速 / jerk 的解析式；
+2. 刹停后不再移动；
+3. 圆周位置闭式解、`|a| = s·ω`；
+4. 俯仰 90°：速度转到 -z，位移 `2/π`；
+5. 四元数长时间积分仍是单位长度；
+6. 一大步 = 50 小步（位置/速度/姿态）；
+7. `min_dt` 越小结果越收敛；
+8. 跨控制段的一步 = 分段调用；
+9. 显式控制不消耗计划队列；
+10. 同 seed 随机运动完全一致（含姿态）；
+11. 装甲板几何：距离固定、法向/up 正交、姿态传导；
+12. 观测时刻表：抖动范围、非均匀、显式间隔、可复现；
+13. 位置/法向噪声统计与配置一致；
+14. 噪声只由帧号决定；
+15. 观测与求值顺序无关；
+16. 相机系输出（位置和法向都旋转）；
+17. 预设 circle：速度、向心加速度、三点拟合半径；
+18. 四个示例 YAML 能装配并跑出有效观测。
 
 ## 目前故意没做的事
 
-- **PnP 误差模型**：现在是对称高斯 + 距离无关 + 无偏。后面替换点只有 `GaussianSensor::observeAt`。
-- **多板关联**：观测里没有编号，靠 `yaw` 在 `2π/n` 等价类里做关联——等滤波层再实现。
-- **遮挡 / 运动模糊 / 曝光时间**：相机模型只做了 FOV + 法向朝向 + 量程门限。
-- **卡尔曼层与可视化**：完全不在这一批。
+- **键盘输入**：接口留好。
+- **PnP 误差模型**：现在是对称高斯 + 法向角噪声。
+- **多板关联 / 卡尔曼层**：下一步。

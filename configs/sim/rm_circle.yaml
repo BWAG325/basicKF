@@ -1,0 +1,45 @@
+# 预设运动：圆周（先加速到 speed，再以 radius 绕圈；不涉及小陀螺）
+
+sim:
+  min_dt: 0.001
+
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+
+initial:
+  position: [0.0, 0.0, 0.18]
+  velocity: [0.0, 0.0, 0.0]
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  spin_phase: 0.0
+
+preset:
+  name: circle        # idle / straight / circle
+  speed: 2.0          # 目标线速度 [m/s]
+  radius: 1.0         # 圆周半径 [m]（负值 = 顺时针）
+  accel: 2.0          # 起步加速度 [m/s²]
+  duration: 6.0
+
+sensor:
+  schedule:
+    t0: 0.0
+    interval: 0.04
+    jitter: 0.015
+  seed: 21
+  position_sigma: [0.01, 0.01, 0.01]
+  normal_sigma: 0.01
+  dropout: 0.02
+  max_range: 20.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [2.0, -6.0, 2.5]
+    target: [1.0, 0.0, 0.2]
+    fov_half_deg: 45.0
+    output_in_camera_frame: false

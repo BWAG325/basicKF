@@ -1,5 +1,8 @@
-# RM 车运动场景：起步 → 直线冲刺 → 左转 → 刹停；1.1s 后开始小陀螺
-# 总时长 5.0 s，三条时间线长度一致。
+# RM 车运动：起步 → 匀速小陀螺 → 边跑边转 → 刹停
+# 每段控制量在 duration 内保持恒定：accel / turn_rate / spin_rate
+
+sim:
+  min_dt: 0.001        # 仿真器最小时间分辨率 [s]
 
 robot:
   armors: 4
@@ -8,35 +11,30 @@ robot:
   armor_width: 0.13
   armor_height: 0.12
   body_radius: 0.30
-  spin_mode: body_rotation  # body_rotation（小陀螺）/ armor_orbit（车体朝向独立）
 
 initial:
-  position: [0.0, 0.0, 0.18]  # 车体中心（装甲板平面高度），z 向上
+  position: [0.0, 0.0, 0.18]
   velocity: [0.0, 0.0, 0.0]
-  yaw: 0.0                    # 车体朝向 [rad]
+  yaw: 0.0                  # 车头偏航 [rad]
+  pitch: 0.0
+  roll: 0.0
   spin_phase: 0.0
-  spin_rate: 0.0
 
-translation:
-  - {type: hold,  duration: 0.5}
-  - {type: accel, duration: 1.0, accel: 2.5}       # 0 → 2.5 m/s
-  - {type: line,  duration: 1.8, speed: 2.5, heading: 0.0}
-  - {type: arc,   duration: 1.2, speed: 2.5, omega: 1.2}   # 左转
-  - {type: brake, duration: 0.5, decel: 5.0}       # 2.5 / 5.0 = 0.5 s 正好停住
-
-yaw:
-  - {type: hold, duration: 5.0}
-
-spin:
-  - {type: off,  duration: 0.5}
-  - {type: ramp, duration: 0.6, from: 0.0, to: 9.0}
-  - {type: rate, duration: 3.9, rate: 9.0}
+plan:
+  - {duration: 0.5}                        # 静止
+  - {duration: 1.0, accel: 2.5}            # 0 → 2.5 m/s
+  - {duration: 1.8, angular_rate: [0.0, 0.0, 9.0]}  # 匀速 + 小陀螺（整车绕 z 转）
+  - {duration: 1.2, turn_rate: 1.2}        # 边跑边左转
+  - {duration: 0.5, accel: -2.0, jerk: -12.0} # 刹车：负加速度随时间增大，正好 0.5s 停住
 
 sensor:
-  dt: 0.01
+  schedule:
+    t0: 0.0
+    interval: 0.04      # 名义帧间隔 [s]
+    jitter: 0.015       # 每帧 ±抖动，模拟实车非均匀观测
   seed: 42
   position_sigma: [0.01, 0.01, 0.01]   # 先按对称高斯占位，PnP 误差特性后续再替换
-  yaw_sigma: 0.01
+  normal_sigma: 0.01
   dropout: 0.02
   max_range: 20.0
   facing_min_cos: 0.2

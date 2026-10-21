@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include <Eigen/Geometry>
 
@@ -23,41 +25,37 @@ struct CameraConfig {
 Mat3 lookAtRotation(const Vec3& eye, const Vec3& target);
 
 struct SensorConfig {
-    double dt = 0.01;                        ///< 采样周期 [s]
-    std::uint64_t seed = 42;                 ///< 随机流种子
-    Vec3 position_sigma = Vec3::Constant(0.01);  ///< 位置噪声 std，**输出坐标系**下逐轴
-    double yaw_sigma = 0.01;                 ///< 法向 yaw 噪声 std [rad]
-    double dropout = 0.0;                    ///< 每帧丢帧概率 [0,1]
-    double max_range = 20.0;                 ///< 量程 [m]
-    double facing_min_cos = 0.2;             ///< 法向与「指向相机」方向夹角余弦门限
+    std::uint64_t seed = 42;
+    Vec3 position_sigma = Vec3::Constant(0.01);  ///< 位置噪声 std（输出坐标系逐轴）
+    double normal_sigma = 0.01;                  ///< 法向角噪声 std [rad]
+    double dropout = 0.0;
+    double max_range = 20.0;
+    double facing_min_cos = 0.2;
     CameraConfig camera{};
+
+    // ---- 观测时刻表（与仿真器 min_dt 完全独立）----
+    double t0 = 0.0;
+    double interval = 0.04;
+    double jitter = 0.0;
+    std::vector<double> intervals;
 };
 
-/// 观测模型：目前是「沿轴独立高斯 + 硬门限可见性 + 独立丢帧」。
-/// 噪声的钥匙是 (seed, sample_index, channel)，与求值顺序完全无关——
-/// 这是「任意 t 求值」能成立的前提。
+/// 生成非均匀的观测时刻表：times[k] = t0 + Σ interval_i。
+std::vector<double> makeObservationTimes(const SensorConfig& cfg, std::size_t count);
+
+/// 观测模型：位置高斯 + 法向小角度旋转噪声 + 可见性门限 + 独立丢帧。
+/// 噪声/丢帧的钥匙是**第几帧**，不是时间，所以帧间隔可以任意不均匀。
 class GaussianSensor {
 public:
     explicit GaussianSensor(SensorConfig cfg = {});
 
     [[nodiscard]] const SensorConfig& config() const noexcept { return cfg_; }
 
-    /// t 所属采样序号；dt<=0 时恒为 0。
-    [[nodiscard]] std::uint64_t sampleIndex(double t) const noexcept;
-    [[nodiscard]] double sampleTime(double t) const noexcept;
-
-    /// 该序号是否被丢弃（由 hash 决定，不受调用顺序影响）。
-    [[nodiscard]] bool dropped(std::uint64_t index) const;
-
-    /// t 是否恰好落在采样时刻且未被丢弃（供「逐帧驱动」使用）。
-    [[nodiscard]] bool triggeredAt(double t, double eps = 1e-9) const;
-
-    /// 给定真值，产生 t 时刻的观测。anno 非空时写入仅供评估的旁注。
     [[nodiscard]] Observation observeAt(const RobotTruth& truth,
                                         double t,
+                                        std::uint64_t frame_index,
                                         ObservationTruth* anno = nullptr) const;
 
-    /// 世界系点是否落在相机视场内。
     [[nodiscard]] bool inFov(const Vec3& p_world) const;
 
 private:

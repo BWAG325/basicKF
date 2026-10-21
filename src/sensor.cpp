@@ -9,8 +9,9 @@ namespace sim {
 
 namespace {
 constexpr std::uint64_t kChPos = 1;
-constexpr std::uint64_t kChYaw = 2;
+constexpr std::uint64_t kChNormal = 2;
 constexpr std::uint64_t kChDrop = 3;
+constexpr std::uint64_t kChInterval = 4;
 }  // namespace
 
 Mat3 lookAtRotation(const Vec3& eye, const Vec3& target) {
@@ -34,34 +35,30 @@ Mat3 lookAtRotation(const Vec3& eye, const Vec3& target) {
     return R;
 }
 
+std::vector<double> makeObservationTimes(const SensorConfig& cfg, std::size_t count) {
+    std::vector<double> times;
+    times.reserve(count);
+
+    double t = cfg.t0;
+    for (std::size_t k = 0; k < count; ++k) {
+        times.push_back(t);
+
+        double step = cfg.interval;
+        if (!cfg.intervals.empty()) {
+            step = cfg.intervals[k % cfg.intervals.size()];
+        } else {
+            Rng rng(mixKey(cfg.seed, k, kChInterval));
+            step += cfg.jitter * (2.0 * rng.uniform() - 1.0);
+        }
+        t += std::max(step, 1e-6);
+    }
+    return times;
+}
+
 GaussianSensor::GaussianSensor(SensorConfig cfg) : cfg_(std::move(cfg)) {
     if (cfg_.camera.enabled) {
-        // 相机朝向永远由 position/target 决定，避免配置里两处旋转打架。
         cfg_.camera.R_world_cam = lookAtRotation(cfg_.camera.position, cfg_.camera.target);
     }
-}
-
-std::uint64_t GaussianSensor::sampleIndex(double t) const noexcept {
-    if (!(cfg_.dt > 0.0)) return 0;
-    const double k = std::llround(t / cfg_.dt);
-    return k < 0.0 ? 0u : static_cast<std::uint64_t>(k);
-}
-
-double GaussianSensor::sampleTime(double t) const noexcept {
-    return static_cast<double>(sampleIndex(t)) * cfg_.dt;
-}
-
-bool GaussianSensor::dropped(std::uint64_t index) const {
-    if (cfg_.dropout <= 0.0) return false;
-    Rng rng(mixKey(cfg_.seed, index, kChDrop));
-    return rng.uniform() < cfg_.dropout;
-}
-
-bool GaussianSensor::triggeredAt(double t, double eps) const {
-    if (!(cfg_.dt > 0.0)) return false;
-    const std::uint64_t idx = sampleIndex(t);
-    if (std::abs(t - static_cast<double>(idx) * cfg_.dt) > eps) return false;
-    return !dropped(idx);
 }
 
 bool GaussianSensor::inFov(const Vec3& p_world) const {
@@ -72,14 +69,14 @@ bool GaussianSensor::inFov(const Vec3& p_world) const {
     return ang <= cfg_.camera.fov_half_deg * kPi / 180.0;
 }
 
-Observation GaussianSensor::observeAt(const RobotTruth& truth, double t, ObservationTruth* anno) const {
+Observation GaussianSensor::observeAt(const RobotTruth& truth, double t, std::uint64_t frame_index,
+                                      ObservationTruth* anno) const {
     Observation obs;
     obs.t = t;
     obs.in_camera_frame = cfg_.camera.enabled && cfg_.camera.output_in_camera_frame;
 
-    const std::uint64_t idx = sampleIndex(t);
-
-    if (dropped(idx)) {
+    Rng drop_rng(mixKey(cfg_.seed, frame_index, kChDrop));
+    if (cfg_.dropout > 0.0 && drop_rng.uniform() < cfg_.dropout) {
         obs.reason = InvalidReason::Dropped;
         return obs;
     }
@@ -95,7 +92,7 @@ Observation GaussianSensor::observeAt(const RobotTruth& truth, double t, Observa
     for (int i = 0; i < count; ++i) {
         const ArmorTruth& a = truth.armors[static_cast<std::size_t>(i)];
 
-        if (!cfg_.camera.enabled) {  // 无相机模型：默认第一块板可见
+        if (!cfg_.camera.enabled) {
             best = 0;
             best_facing = 0.0;
             best_range = 0.0;
@@ -110,6 +107,7 @@ Observation GaussianSensor::observeAt(const RobotTruth& truth, double t, Observa
         if (!inFov(a.p)) continue;
         any_in_fov = true;
 
+        // 板法向要朝向相机：n·(cam - p) > 0
         const double facing = a.n.dot(d / range);
         if (facing < cfg_.facing_min_cos) continue;
 
@@ -133,20 +131,27 @@ Observation GaussianSensor::observeAt(const RobotTruth& truth, double t, Observa
 
     const ArmorTruth& a = truth.armors[static_cast<std::size_t>(best)];
 
-    Rng pos_rng(mixKey(cfg_.seed, idx, kChPos));
+    // 位置噪声
+    Rng pos_rng(mixKey(cfg_.seed, frame_index, kChPos));
     const Vec3 noise(pos_rng.gauss() * cfg_.position_sigma.x(),
                      pos_rng.gauss() * cfg_.position_sigma.y(),
                      pos_rng.gauss() * cfg_.position_sigma.z());
 
-    Rng yaw_rng(mixKey(cfg_.seed, idx, kChYaw));
-    obs.yaw = wrapPi(a.yaw + yaw_rng.gauss() * cfg_.yaw_sigma);
-    obs.R_yaw = cfg_.yaw_sigma * cfg_.yaw_sigma;
+    // 法向噪声：小角度旋转矢量 δ 作用在 n 上（保证仍是单位向量）
+    Rng n_rng(mixKey(cfg_.seed, frame_index, kChNormal));
+    const Vec3 delta(n_rng.gauss() * cfg_.normal_sigma,
+                     n_rng.gauss() * cfg_.normal_sigma,
+                     n_rng.gauss() * cfg_.normal_sigma);
+    obs.n = (a.n + delta.cross(a.n)).normalized();
+    obs.R_n = cfg_.normal_sigma * cfg_.normal_sigma;
 
     obs.R_pos = Mat3::Zero();
     obs.R_pos.diagonal() = cfg_.position_sigma.cwiseProduct(cfg_.position_sigma);
 
     if (obs.in_camera_frame) {
-        obs.p = cfg_.camera.R_world_cam.transpose() * (a.p - cfg_.camera.position) + noise;
+        const Mat3 R_cw = cfg_.camera.R_world_cam.transpose();
+        obs.p = R_cw * (a.p - cfg_.camera.position) + noise;
+        obs.n = (R_cw * obs.n).normalized();
     } else {
         obs.p = a.p + noise;
     }

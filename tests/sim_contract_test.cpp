@@ -1,20 +1,21 @@
-// 模拟器「契约测试」：这些测试定义了接口必须永远满足的性质。
-// 一旦它们变红，说明「任意 t 求值」「导数为真」「观测可复现」这些承诺被破坏了。
+// 3D 仿真器契约测试：四元数姿态、三维积分、控制段切换、非均匀观测。
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
-#include <map>
 #include <memory>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "sim/config.hpp"
-#include "sim/primitives.hpp"
-#include "sim/scene.hpp"
+#include "sim/controller.hpp"
+#include "sim/integrator.hpp"
+#include "sim/preset.hpp"
 #include "sim/sensor.hpp"
+#include "sim/simulator.hpp"
 
 namespace {
 
@@ -34,376 +35,312 @@ void checkNear(double got, double want, double tol, const std::string& what) {
     }
 }
 
-bool sameTruth(const sim::RobotTruth& a, const sim::RobotTruth& b) {
-    if (a.chassis.p != b.chassis.p || a.chassis.v != b.chassis.v) return false;
-    if (a.chassis.yaw != b.chassis.yaw || a.chassis.yaw_rate != b.chassis.yaw_rate) return false;
-    if (a.spin_phase_raw != b.spin_phase_raw || a.spin_rate != b.spin_rate) return false;
-    for (int i = 0; i < a.armor_count; ++i) {
-        if (a.armors[static_cast<std::size_t>(i)].p != b.armors[static_cast<std::size_t>(i)].p) return false;
-    }
-    return true;
-}
-
-sim::Scene makeScene(sim::SpinSemantics sem = sim::SpinSemantics::BodyRotation, double spin_rate = 3.0) {
-    sim::Scene sc;
+sim::RobotGeometry makeGeom() {
     sim::RobotGeometry g;
     g.armor_count = 4;
-    sc.setGeometry(g);
-    sc.setSpinSemantics(sem);
-
-    sim::TranslationState tr;
-    tr.p = sim::Vec3(0.0, 0.0, 0.18);
-    tr.v = sim::Vec3(2.0, 0.0, 0.0);
-    sim::YawState ys;
-    sim::PhaseState sp;
-    sp.omega = spin_rate;
-    sc.setInitial(tr, ys, sp);
-
-    sc.translation().add(std::make_unique<sim::Line>(2.0, sim::kSpeedInherit, 0.0));
-    sc.translation().add(std::make_unique<sim::Arc>(1.0, sim::kSpeedInherit, 1.0));
-    sc.yaw().add(std::make_unique<sim::YawHold>(3.0));
-    sc.spin().add(std::make_unique<sim::SpinRate>(3.0, spin_rate));
-    return sc;
+    return g;
 }
 
-/// 只数 eval 次数的直线：用来证明“构建期零计算、查询时才折叠”。
-struct EvalCounter {
-    static inline int calls = 0;
-};
+sim::RobotState makeState(double speed = 0.0) {
+    sim::RobotState s;
+    s.p = sim::Vec3(0.0, 0.0, 0.18);
+    s.speed = speed;
+    s.v = sim::Vec3(speed, 0.0, 0.0);
+    return s;
+}
 
-class CountingLine final : public sim::ITranslationPrimitive {
-public:
-    explicit CountingLine(double d) : dur_(d) {}
-    [[nodiscard]] double duration() const override { return dur_; }
-    [[nodiscard]] std::string_view name() const override { return "counting_line"; }
-    [[nodiscard]] sim::TranslationState eval(const sim::TranslationState& s, double tau) const override {
-        ++EvalCounter::calls;
-        return sim::TranslationState{s.p + sim::Vec3(1.0, 0.0, 0.0) * tau,
-                                     sim::Vec3(1.0, 0.0, 0.0), sim::Vec3::Zero()};
-    }
+sim::Simulator makeSim(std::unique_ptr<sim::IController> c = nullptr, double min_dt = 0.001) {
+    return sim::Simulator(makeGeom(), makeState(), std::move(c), min_dt);
+}
 
-private:
-    double dur_;
-};
-
-sim::Scene makeStaticScene(double duration = 10.0) {
-    sim::Scene sc;
-    sim::RobotGeometry g;
-    g.armor_count = 4;
-    sc.setGeometry(g);
-
-    sim::TranslationState tr;
-    tr.p = sim::Vec3(0.0, 0.0, 0.18);
-    sc.setInitial(tr, sim::YawState{}, sim::PhaseState{});
-
-    sc.translation().add(std::make_unique<sim::Hold>(duration));
-    sc.yaw().add(std::make_unique<sim::YawHold>(duration));
-    sc.spin().add(std::make_unique<sim::SpinOff>(duration));
-    return sc;
+sim::Simulator makeSim(const sim::RobotState& init, std::unique_ptr<sim::IController> c = nullptr,
+                       double min_dt = 0.001) {
+    return sim::Simulator(makeGeom(), init, std::move(c), min_dt);
 }
 
 // ---------------------------------------------------------------------------
+// 积分
+// ---------------------------------------------------------------------------
 
-void testOrderIndependence() {
-    const sim::Scene sc = makeScene();
+void testStraightAccel() {
+    sim::Control c;
+    c.accel = 2.0;
 
-    std::vector<double> ts;
-    ts.reserve(400);
-    for (int i = 0; i < 400; ++i) ts.push_back(static_cast<double>(i) * 0.0037);
+    sim::Simulator sim = makeSim();
+    sim.step(1.0, c);
 
-    std::map<double, sim::RobotTruth> forward;
-    for (double t : ts) forward[t] = sc.truthAt(t);
+    checkNear(sim.state().speed, 2.0, 1e-12, "匀加速: v = at");
+    checkNear(sim.state().p.x(), 1.0, 1e-12, "匀加速: p = ½at²");
+    checkNear(sim.state().a.x(), 2.0, 1e-12, "匀加速: a = accel");
+}
 
-    std::mt19937_64 rng(12345);
-    std::shuffle(ts.begin(), ts.end(), rng);
+void testJerk() {
+    sim::Control c;
+    c.jerk = 2.0;
 
-    bool all_same = true;
-    for (double t : ts) {
-        const sim::RobotTruth got = sc.truthAt(t);
-        if (!sameTruth(got, forward.at(t))) all_same = false;
+    sim::Simulator sim = makeSim();
+    sim.step(1.0, c);
+
+    checkNear(sim.state().speed, 1.0, 1e-12, "jerk: v = ½jt²");
+    checkNear(sim.state().p.x(), 1.0 / 3.0, 1e-12, "jerk: p = jt³/6");
+    checkNear(sim.state().accel, 2.0, 1e-12, "jerk: a = jt");
+}
+
+void testStop() {
+    sim::Simulator sim = makeSim(makeState(2.0));
+    sim::Control c;
+    c.jerk = -4.0;
+
+    sim.step(1.0, c);
+    checkNear(sim.state().p.x(), 4.0 / 3.0, 1e-12, "jerk 刹停: 位移 = ∫(2-2τ²)");
+    checkNear(sim.state().speed, 0.0, 1e-12, "jerk 刹停: v = 0");
+
+    c.jerk = -4.0;
+    sim.step(1.0, c);
+    checkNear(sim.state().p.x(), 4.0 / 3.0, 1e-12, "停住后不再移动");
+}
+
+void testCircle() {
+    sim::Control c;
+    c.angular_rate = sim::Vec3(0.0, 0.0, 1.0);
+
+    sim::Simulator sim = makeSim(makeState(2.0));
+    sim.step(1.0, c);
+
+    const sim::Vec3 want(2.0 * std::sin(1.0), 2.0 * (1.0 - std::cos(1.0)), 0.18);
+    checkNear((sim.state().p - want).norm(), 0.0, 1e-9, "圆周: 位置闭式解");
+    checkNear(sim.state().a.norm(), 2.0, 1e-9, "圆周: |a| = s·ω");
+}
+
+void testPitch() {
+    sim::Control c;
+    c.angular_rate = sim::Vec3(0.0, sim::kPi / 2.0, 0.0);  // 绕 body y 转 90°
+
+    sim::Simulator sim = makeSim(makeState(1.0));
+    sim.step(1.0, c);
+
+    checkNear(sim.state().v.z(), -1.0, 1e-9, "pitch: 车头转 90° 后速度朝 -z");
+    checkNear(sim.state().p.x(), 2.0 / sim::kPi, 1e-9, "pitch: x 位移 = 2/π");
+    checkNear(sim.state().p.z() - 0.18, -2.0 / sim::kPi, 1e-9, "pitch: z 位移 = -2/π");
+    checkNear(sim.state().q.norm(), 1.0, 1e-12, "姿态四元数保持单位长度");
+}
+
+void testQuatStaysUnit() {
+    sim::Simulator sim = makeSim(makeState(1.5));
+    sim::Control c;
+    c.angular_rate = sim::Vec3(0.7, -0.4, 1.3);
+
+    for (int i = 0; i < 1000; ++i) sim.step(0.01, c);
+    checkNear(sim.state().q.norm(), 1.0, 1e-12, "长时间积分后四元数仍为单位长度");
+}
+
+// ---------------------------------------------------------------------------
+// 增量推进 / 时间分辨率
+// ---------------------------------------------------------------------------
+
+void testSplitEquivalence() {
+    sim::Control c;
+    c.accel = 2.0;
+    c.angular_rate = sim::Vec3(0.0, 0.0, 0.7);
+    c.spin_rate = 3.0;
+
+    sim::Simulator a = makeSim(makeState(1.0));
+    a.step(0.5, c);
+
+    sim::Simulator b = makeSim(makeState(1.0));
+    for (int i = 0; i < 50; ++i) b.step(0.01, c);
+
+    checkNear((a.state().p - b.state().p).norm(), 0.0, 1e-9, "一大步 = 50 小步（位置）");
+    checkNear((a.state().v - b.state().v).norm(), 0.0, 1e-9, "一大步 = 50 小步（速度）");
+    checkNear((a.state().q.coeffs() - b.state().q.coeffs()).norm(), 0.0, 1e-9, "一大步 = 50 小步（姿态）");
+}
+
+void testMinDtConvergence() {
+    sim::Control c;
+    c.accel = 1.0;
+    c.angular_rate = sim::Vec3(0.0, 0.2, 0.9);
+
+    sim::Simulator coarse = makeSim(makeState(1.0), nullptr, 1e-3);
+    sim::Simulator fine = makeSim(makeState(1.0), nullptr, 1e-4);
+
+    for (int i = 0; i < 200; ++i) {
+        coarse.step(0.01, c);
+        fine.step(0.01, c);
     }
-    check(all_same, "乱序求值必须与顺序求值逐位一致");
+    checkNear((coarse.state().p - fine.state().p).norm(), 0.0, 1e-8, "min_dt 越小结果越收敛");
 }
 
-void testQueryTimeCompute() {
-    sim::Scene sc;
-    sim::RobotGeometry g;
-    g.armor_count = 4;
-    sc.setGeometry(g);
-    sim::TranslationState tr;
-    tr.p = sim::Vec3(0.0, 0.0, 0.18);
-    sc.setInitial(tr, sim::YawState{}, sim::PhaseState{});
+void testPlanDuration() {
+    auto mkplan = [] {
+        std::vector<sim::Control> p(2);
+        p[0].accel = 2.0;
+        p[0].duration = 0.3;
+        p[1].angular_rate = sim::Vec3(0.0, 0.0, 1.0);
+        p[1].duration = 0.2;
+        return p;
+    };
 
-    constexpr int kSegments = 20;
-    for (int i = 0; i < kSegments; ++i) sc.translation().add(std::make_unique<CountingLine>(1.0));
-    sc.yaw().add(std::make_unique<sim::YawHold>(20.0));
-    sc.spin().add(std::make_unique<sim::SpinOff>(20.0));
+    sim::Simulator a = makeSim(makeState(1.0), std::make_unique<sim::PlanController>(mkplan()));
+    a.step(0.5);
 
-    check(EvalCounter::calls == 0, "add 阶段必须一次 eval 都不做（构建期零计算）");
+    sim::Simulator b = makeSim(makeState(1.0), std::make_unique<sim::PlanController>(mkplan()));
+    b.step(0.3);
+    b.step(0.2);
 
-    EvalCounter::calls = 0;
-    (void)sc.truthAt(0.5);  // 第 0 段
-    check(EvalCounter::calls == 1, "t 落在首段：只求值 1 次");
+    sim::Simulator c = makeSim(makeState(1.0), std::make_unique<sim::PlanController>(mkplan()));
+    for (int i = 0; i < 10; ++i) c.step(0.05);
 
-    EvalCounter::calls = 0;
-    (void)sc.truthAt(5.5);  // 第 5 段：前缀 5 段 + 本段
-    check(EvalCounter::calls == 6, "t 落在第 5 段：现场折叠 6 次（前缀 + 本段）");
-
-    EvalCounter::calls = 0;
-    (void)sc.truthAt(19.5);  // 末段
-    check(EvalCounter::calls == kSegments, "t 落在末段：折叠 20 次");
-
-    EvalCounter::calls = 0;
-    (void)sc.truthAt(19.5);  // 再问一次：不需要缓存也已算过的段
-    check(EvalCounter::calls == kSegments, "重复查询不改结果、也不依赖缓存（每次都按 t 重算）");
+    checkNear((a.state().p - b.state().p).norm(), 0.0, 1e-9, "跨段一步 = 两段两步");
+    checkNear((a.state().p - c.state().p).norm(), 0.0, 1e-9, "跨段一步 = 十小步");
 }
 
-void testDerivatives() {
-    const sim::Scene sc = makeScene();
-    const double h = 1e-6;
+void testExplicitControl() {
+    std::vector<sim::Control> plan(2);
+    plan[0].accel = 1.0;
+    plan[0].duration = 0.2;
+    plan[1].accel = 0.0;
+    plan[1].duration = 0.2;
 
-    for (double t : {0.30, 1.20, 2.50}) {
-        const sim::RobotTruth a = sc.truthAt(t - h);
-        const sim::RobotTruth b = sc.truthAt(t + h);
-        const sim::RobotTruth c = sc.truthAt(t);
+    auto pc = std::make_unique<sim::PlanController>(plan);
+    auto* raw = pc.get();
+    sim::Simulator sim = makeSim(makeState(), std::move(pc));
 
-        const sim::Vec3 v_fd = (b.chassis.p - a.chassis.p) / (2.0 * h);
-        const sim::Vec3 a_fd = (b.chassis.v - a.chassis.v) / (2.0 * h);
+    sim.step(0.1);
+    check(raw->remaining() == 1, "默认推进应取走第一段控制");
 
-        checkNear((v_fd - c.chassis.v).norm(), 0.0, 1e-5, "v 必须等于 dp/dt");
-        checkNear((a_fd - c.chassis.a).norm(), 0.0, 1e-4, "a 必须等于 dv/dt");
-        checkNear(std::abs(c.chassis.a.z()), 0.0, 1e-12, "平面运动 a.z 应为 0");
+    sim.step(0.1, sim::Control{});
+    check(raw->remaining() == 1, "显式控制不应消耗计划队列");
+
+    const double v_before = sim.state().speed;
+    sim.step(0.1);
+    check(sim.state().speed > v_before, "之后回到计划继续加速");
+}
+
+void testRandomDeterminism() {
+    sim::RandomController::Config cfg;
+    cfg.seed = 5;
+    cfg.min_pitch_rate = -0.3;
+    cfg.max_pitch_rate = 0.3;
+
+    sim::Simulator a = makeSim(makeState(), std::make_unique<sim::RandomController>(cfg));
+    sim::Simulator b = makeSim(makeState(), std::make_unique<sim::RandomController>(cfg));
+
+    for (int i = 0; i < 200; ++i) {
+        a.step(0.02);
+        b.step(0.02);
     }
+    checkNear((a.state().p - b.state().p).norm(), 0.0, 1e-12, "同 seed 随机运动应完全一致");
+    checkNear((a.state().q.coeffs() - b.state().q.coeffs()).norm(), 0.0, 1e-12, "同 seed 姿态一致");
 }
 
-void testAnalyticPrimitives() {
-    // 直线：p = p0 + v t
-    {
-        sim::Scene sc;
-        sim::RobotGeometry g;
-        g.armor_count = 4;
-        sc.setGeometry(g);
-        sim::TranslationState tr;
-        tr.p = sim::Vec3(1.0, 2.0, 0.18);
-        tr.v = sim::Vec3(2.0, 0.0, 0.0);
-        sc.setInitial(tr, sim::YawState{}, sim::PhaseState{});
-        sc.translation().add(std::make_unique<sim::Line>(1.0));
-        sc.yaw().add(std::make_unique<sim::YawHold>(1.0));
-        sc.spin().add(std::make_unique<sim::SpinOff>(1.0));
-            const sim::RobotTruth t = sc.truthAt(1.0);
-        checkNear((t.chassis.p - sim::Vec3(3.0, 2.0, 0.18)).norm(), 0.0, 1e-12, "line: p = p0 + v t");
-    }
+// ---------------------------------------------------------------------------
+// 几何 / 观测时刻表 / 观测
+// ---------------------------------------------------------------------------
 
-    // 等加速：p = p0 + 0.5 a t², v = a t
-    {
-        sim::Scene sc;
-        sim::RobotGeometry g;
-        g.armor_count = 4;
-        sc.setGeometry(g);
-        sim::TranslationState tr;
-        tr.p = sim::Vec3(0.0, 0.0, 0.18);
-        sc.setInitial(tr, sim::YawState{}, sim::PhaseState{});
-        sc.translation().add(std::make_unique<sim::Accel>(1.0, 2.0, 0.0));
-        sc.yaw().add(std::make_unique<sim::YawHold>(1.0));
-        sc.spin().add(std::make_unique<sim::SpinOff>(1.0));
-            const sim::RobotTruth t = sc.truthAt(1.0);
-        checkNear((t.chassis.p - sim::Vec3(1.0, 0.0, 0.18)).norm(), 0.0, 1e-12, "accel: p = 0.5 a t²");
-        checkNear(t.chassis.v.x(), 2.0, 1e-12, "accel: v = a t");
-    }
-
-    // 圆弧：s=2, ω=1, 1s ⇒ p = (2 sin1, 2(1-cos1)), |a| = s·ω
-    {
-        sim::Scene sc;
-        sim::RobotGeometry g;
-        g.armor_count = 4;
-        sc.setGeometry(g);
-        sim::TranslationState tr;
-        tr.p = sim::Vec3(0.0, 0.0, 0.18);
-        tr.v = sim::Vec3(2.0, 0.0, 0.0);
-        sc.setInitial(tr, sim::YawState{}, sim::PhaseState{});
-        sc.translation().add(std::make_unique<sim::Arc>(1.0, 2.0, 1.0, 0.0));
-        sc.yaw().add(std::make_unique<sim::YawHold>(1.0));
-        sc.spin().add(std::make_unique<sim::SpinOff>(1.0));
-            const sim::RobotTruth t = sc.truthAt(1.0);
-        const sim::Vec3 want(2.0 * std::sin(1.0), 2.0 * (1.0 - std::cos(1.0)), 0.18);
-        checkNear((t.chassis.p - want).norm(), 0.0, 1e-12, "arc: 位置解析式");
-        checkNear(t.chassis.a.norm(), 2.0, 1e-12, "arc: |a| = s·ω（向心）");
-        checkNear(std::abs(sim::angleDiff(std::atan2(t.chassis.v.y(), t.chassis.v.x()), 1.0)), 0.0, 1e-12,
-                  "arc: 速度方向转过 ωt");
-    }
-}
-
-void testPhaseIntegral() {
-    sim::Scene sc;
-    sim::RobotGeometry g;
-    g.armor_count = 4;
-    sc.setGeometry(g);
-
-    sim::TranslationState tr;
-    tr.p = sim::Vec3(0.0, 0.0, 0.18);
-    sc.setInitial(tr, sim::YawState{}, sim::PhaseState{});
-
-    sc.translation().add(std::make_unique<sim::Hold>(5.0));
-    sc.yaw().add(std::make_unique<sim::YawHold>(5.0));
-    sc.spin().add(std::make_unique<sim::SpinOff>(1.0));
-    sc.spin().add(std::make_unique<sim::SpinRamp>(1.0, 0.0, 8.0));
-    sc.spin().add(std::make_unique<sim::SpinRate>(3.0, 8.0));
-
-    // 解析值：0.5*8*1 + 8*3 = 28 rad
-    checkNear(sc.truthAt(5.0).spin_phase_raw, 28.0, 1e-12, "ramp 相位解析积分");
-
-    // 数值积分对拍
-    const double h = 1e-4;
-    double acc = 0.0;
-    for (double t = 0.0; t < 5.0; t += h) {
-        const double w0 = sc.truthAt(t).spin_rate;
-        const double w1 = sc.truthAt(t + h).spin_rate;
-        acc += 0.5 * (w0 + w1) * h;
-    }
-    checkNear(sc.truthAt(5.0).spin_phase_raw, acc, 1e-6, "phase 必须等于 ∫ω dt");
-}
-
-void testContinuity() {
-    const sim::Scene good = makeScene();
-    check(!good.validate().anyWarn(), "C1 连续场景不应产生 warn");
-
-    sim::Scene bad;
-    sim::RobotGeometry g;
-    g.armor_count = 4;
-    bad.setGeometry(g);
-    sim::TranslationState tr;
-    tr.v = sim::Vec3(2.0, 0.0, 0.0);
-    bad.setInitial(tr, sim::YawState{}, sim::PhaseState{});
-    bad.translation().add(std::make_unique<sim::Line>(1.0, sim::kSpeedInherit, 0.0));
-    bad.translation().add(std::make_unique<sim::Hold>(1.0));  // 瞬时归零 → 未声明跳变
-    bad.yaw().add(std::make_unique<sim::YawHold>(2.0));
-    bad.spin().add(std::make_unique<sim::SpinOff>(2.0));
-
-    check(bad.validate().anyWarn(), "运动段后接 hold 必须报未声明速度跳变");
-}
-
-void testDeclaredJump() {
-    sim::Scene sc;
-    sim::RobotGeometry g;
-    g.armor_count = 4;
-    sc.setGeometry(g);
-
-    sim::TranslationState tr;
-    tr.v = sim::Vec3(2.0, 0.0, 0.0);
-    sc.setInitial(tr, sim::YawState{}, sim::PhaseState{});
-
-    sc.translation().add(std::make_unique<sim::Line>(1.0));  // 继承 2 m/s
-    sim::TranslationState jump;
-    jump.v = sim::Vec3(-1.0, 0.0, 0.0);                      // 模拟受击掉速
-    sc.translation().add(std::make_unique<sim::Line>(1.0), jump);
-    sc.yaw().add(std::make_unique<sim::YawHold>(2.0));
-    sc.spin().add(std::make_unique<sim::SpinOff>(2.0));
-
-    check(!sc.validate().anyWarn(), "显式 jump 不应报 warn");
-    checkNear(sc.truthAt(1.5).chassis.v.x(), 1.0, 1e-12, "jump 后的速度应被后续段继承");
-}
-
-void testWrapContinuity() {
-    const sim::Scene sc = makeScene(sim::SpinSemantics::BodyRotation, 12.0);
-    const double h = 1e-4;
-    const double bound = (0.22 * 12.0 + 2.0 + 1.0) * h;
-
-    double max_dp = 0.0;
-    sim::Vec3 prev = sc.truthAt(0.0).armors[0].p;
-    for (double t = h; t <= 1.0; t += h) {
-        const sim::Vec3 cur = sc.truthAt(t).armors[0].p;
-        max_dp = std::max(max_dp, (cur - prev).norm());
-        prev = cur;
-    }
-    check(max_dp < bound * 1.5, "跨 2π 时装甲板位置必须连续");
-}
-
-void testClampOutsideRange() {
-    const sim::Scene sc = makeScene();
-    check(sameTruth(sc.truthAt(-1.0), sc.truthAt(0.0)), "t<0 应 clamp 到 0");
-    check(sameTruth(sc.truthAt(100.0), sc.truthAt(sc.duration())), "t>T 应 clamp 到 T");
-    checkNear(sc.truthAt(100.0).chassis.t, sc.duration(), 1e-12, "clamp 后时间戳应为 T");
-}
-
-void testGeometry() {
+void testArmorGeometry() {
     sim::RobotGeometry g;
     g.armor_count = 4;
     g.armor_radius = 0.22;
     g.armor_dz = 0.05;
 
     const sim::Vec3 c(1.0, 2.0, 0.18);
-    const double ring = 0.7;
-    const auto armors = sim::makeArmors(g, c, ring);
+    const sim::Quat body = sim::Quat(Eigen::AngleAxisd(0.3, sim::Vec3::UnitY()));
+
+    const auto armors = sim::makeArmors(g, c, body, 0.7);
+    const double expect_r = std::hypot(g.armor_radius, g.armor_dz);
 
     for (int i = 0; i < 4; ++i) {
         const auto& a = armors[static_cast<std::size_t>(i)];
         checkNear(a.n.norm(), 1.0, 1e-12, "法向必须是单位向量");
-        checkNear((a.p - c - sim::Vec3(0, 0, g.armor_dz)).norm(), g.armor_radius, 1e-12,
-                  "板中心必须在半径圆上");
-        checkNear(std::abs(sim::angleDiff(a.yaw, std::atan2(a.n.y(), a.n.x()))), 0.0, 1e-12,
-                  "yaw 必须与法向一致");
+        checkNear((a.p - c).norm(), expect_r, 1e-12, "板中心到车体中心的距离固定");
+        checkNear(a.up.norm(), 1.0, 1e-12, "up 必须是单位向量");
+        checkNear(a.n.dot(a.up), 0.0, 1e-12, "法向与 up 正交");
     }
 
-    for (int i = 1; i < 4; ++i) {
-        const double d = sim::angleDiff(armors[static_cast<std::size_t>(i)].yaw,
-                                        armors[static_cast<std::size_t>(i - 1)].yaw);
-        checkNear(std::abs(d), sim::kPi / 2.0, 1e-12, "相邻板夹角 90°");
-    }
+    check(std::abs(armors[0].n.y()) > 1e-3 || std::abs(armors[0].n.z()) > 1e-3,
+          "车体姿态变化应传导到装甲板法向");
 }
 
-void testSpinSemantics() {
-    const sim::Scene body = makeScene(sim::SpinSemantics::BodyRotation, 2.0);
-    const sim::Scene orbit = makeScene(sim::SpinSemantics::ArmorOrbit, 2.0);
-
-    const sim::RobotTruth tb = body.truthAt(1.0);
-    const sim::RobotTruth to = orbit.truthAt(1.0);
-
-    checkNear(std::abs(sim::angleDiff(tb.armors[0].yaw, to.armors[0].yaw)), 0.0, 1e-12,
-              "两种自转语义下装甲环角度必须一致");
-    checkNear(std::abs(sim::angleDiff(tb.chassis.yaw, 2.0)), 0.0, 1e-12,
-              "body_rotation 下 chassis.yaw 应含自转");
-    checkNear(std::abs(sim::angleDiff(to.chassis.yaw, 0.0)), 0.0, 1e-12,
-              "armor_orbit 下 chassis.yaw 不应含自转");
-}
-
-void testSensorStats() {
-    const sim::Scene sc = makeStaticScene();
-
+void testObservationSchedule() {
     sim::SensorConfig cfg;
-    cfg.dt = 0.01;
+    cfg.t0 = 0.1;
+    cfg.interval = 0.04;
+    cfg.jitter = 0.01;
+    cfg.seed = 3;
+
+    const auto a = sim::makeObservationTimes(cfg, 500);
+    const auto b = sim::makeObservationTimes(cfg, 500);
+    check(a == b, "观测时刻表应由 seed 唯一决定");
+    checkNear(a[0], cfg.t0, 1e-12, "第一帧时刻应为 t0");
+
+    bool nonuniform = false;
+    for (std::size_t k = 1; k < a.size(); ++k) {
+        const double d = a[k] - a[k - 1];
+        check(d > 0.0, "帧间隔必须为正");
+        check(d >= cfg.interval - cfg.jitter - 1e-12 && d <= cfg.interval + cfg.jitter + 1e-12,
+              "帧间隔应落在 [interval-jitter, interval+jitter]");
+        if (std::abs(d - cfg.interval) > 1e-9) nonuniform = true;
+    }
+    check(nonuniform, "jitter > 0 时帧间隔应非均匀");
+
+    cfg.intervals = {0.05, 0.02, 0.08};
+    const auto c = sim::makeObservationTimes(cfg, 7);
+    checkNear(c[1] - c[0], 0.05, 1e-12, "显式间隔 1");
+    checkNear(c[2] - c[1], 0.02, 1e-12, "显式间隔 2");
+    checkNear(c[3] - c[2], 0.08, 1e-12, "显式间隔 3");
+    checkNear(c[4] - c[3], 0.05, 1e-12, "显式间隔循环使用");
+}
+
+sim::SensorConfig frontCameraSensor() {
+    sim::SensorConfig cfg;
     cfg.seed = 7;
+    cfg.interval = 0.04;
+    cfg.jitter = 0.01;
     cfg.position_sigma = sim::Vec3(0.01, 0.02, 0.03);
-    cfg.yaw_sigma = 0.02;
+    cfg.normal_sigma = 0.02;
     cfg.dropout = 0.0;
     cfg.camera.enabled = true;
     cfg.camera.position = sim::Vec3(3.0, 0.0, 1.0);
     cfg.camera.target = sim::Vec3(0.0, 0.0, 0.18);
+    return cfg;
+}
 
+void testSensorStats() {
+    const sim::Simulator sim = makeSim();
+    const sim::RobotTruth truth = sim.truth();
+
+    const sim::SensorConfig cfg = frontCameraSensor();
     const sim::GaussianSensor sensor(cfg);
 
     const int N = 20000;
+    const auto times = sim::makeObservationTimes(cfg, N);
+
     sim::Observation last;
     sim::Vec3 sum = sim::Vec3::Zero();
     sim::Vec3 sum2 = sim::Vec3::Zero();
-    double yaw_sum = 0.0;
-    double yaw_sum2 = 0.0;
+    double nx = 0.0, nx2 = 0.0, ny = 0.0, ny2 = 0.0;
     int valid = 0;
 
     for (int i = 0; i < N; ++i) {
-        const double t = static_cast<double>(i) * cfg.dt;
-        const sim::RobotTruth tr = sc.truthAt(t);
         sim::ObservationTruth anno;
-        const sim::Observation obs = sensor.observeAt(tr, t, &anno);
+        const sim::Observation obs =
+            sensor.observeAt(truth, times[static_cast<std::size_t>(i)], static_cast<std::uint64_t>(i), &anno);
         if (!obs.valid) continue;
         ++valid;
         last = obs;
-        const sim::Vec3 ref = tr.armors[static_cast<std::size_t>(anno.armor_index)].p;
-        const sim::Vec3 r = obs.p - ref;
+
+        const sim::ArmorTruth& a = truth.armors[static_cast<std::size_t>(anno.armor_index)];
+        const sim::Vec3 r = obs.p - a.p;
         sum += r;
         sum2 += r.cwiseProduct(r);
-        const double dy = sim::angleDiff(obs.yaw, tr.armors[static_cast<std::size_t>(anno.armor_index)].yaw);
-        yaw_sum += dy;
-        yaw_sum2 += dy * dy;
+
+        const sim::Vec3 e = obs.n - a.n;
+        const sim::Vec3 t1 = a.up.cross(a.n).normalized();
+        const sim::Vec3 t2 = a.n.cross(t1);
+        nx += e.dot(t1);
+        nx2 += e.dot(t1) * e.dot(t1);
+        ny += e.dot(t2);
+        ny2 += e.dot(t2) * e.dot(t2);
     }
 
     check(valid == N, "静态正对相机时应每帧都有效");
@@ -415,138 +352,167 @@ void testSensorStats() {
         checkNear(std::sqrt(var[k]), sigma, 0.05 * sigma, "位置噪声标准差应与配置一致");
     }
 
-    const double yaw_mean = yaw_sum / static_cast<double>(N);
-    const double yaw_var = yaw_sum2 / static_cast<double>(N) - yaw_mean * yaw_mean;
-    checkNear(yaw_mean, 0.0, 5.0 * cfg.yaw_sigma / std::sqrt(static_cast<double>(N)), "yaw 噪声均值应为 0");
-    checkNear(std::sqrt(yaw_var), cfg.yaw_sigma, 0.06 * cfg.yaw_sigma, "yaw 噪声标准差应与配置一致");
+    const double s1 = std::sqrt(nx2 / N - (nx / N) * (nx / N));
+    const double s2 = std::sqrt(ny2 / N - (ny / N) * (ny / N));
+    checkNear(std::sqrt(0.5 * (s1 * s1 + s2 * s2)), cfg.normal_sigma, 0.12 * cfg.normal_sigma,
+              "法向角噪声应与配置一致");
+    checkNear(last.n.norm(), 1.0, 1e-9, "观测法向应是单位向量");
+}
 
-    // R 必须由观测层给出，且与配置一致
-    for (int k = 0; k < 3; ++k) {
-        checkNear(last.R_pos(k, k), cfg.position_sigma[k] * cfg.position_sigma[k], 1e-15,
-                  "R_pos 对角线应为 sigma²");
-        for (int j = 0; j < 3; ++j) {
-            if (j != k) checkNear(last.R_pos(k, j), 0.0, 1e-18, "R_pos 非对角应为 0");
-        }
-    }
-    checkNear(last.R_yaw, cfg.yaw_sigma * cfg.yaw_sigma, 1e-15, "R_yaw 应为 sigma²");
+void testNoiseKeyedByFrame() {
+    const sim::Simulator sim = makeSim();
+    const sim::RobotTruth truth = sim.truth();
+    const sim::GaussianSensor sensor(frontCameraSensor());
+
+    const sim::Observation a = sensor.observeAt(truth, 1.0, 5);
+    const sim::Observation b = sensor.observeAt(truth, 99.0, 5);
+    checkNear((a.p - b.p).norm(), 0.0, 1e-15, "噪声只由帧号决定，与时间戳无关");
+    checkNear((a.n - b.n).norm(), 0.0, 1e-15, "法向噪声只由帧号决定");
+
+    const sim::Observation c = sensor.observeAt(truth, 1.0, 6);
+    check((a.p - c.p).norm() > 1e-9, "不同帧号的噪声应不同");
 }
 
 void testSensorDeterminism() {
-    const sim::Scene sc = makeScene();
+    const sim::Simulator sim = makeSim();
+    const sim::RobotTruth truth = sim.truth();
 
-    sim::SensorConfig cfg;
-    cfg.dt = 0.01;
-    cfg.seed = 99;
+    sim::SensorConfig cfg = frontCameraSensor();
     cfg.dropout = 0.3;
-    cfg.camera.enabled = true;
-    cfg.camera.position = sim::Vec3(3.0, 0.0, 1.0);
-    cfg.camera.target = sim::Vec3(0.0, 0.0, 0.18);
     const sim::GaussianSensor sensor(cfg);
 
-    std::vector<double> ts;
-    for (int i = 0; i < 300; ++i) ts.push_back(static_cast<double>(i) * 0.01);
+    const auto times = sim::makeObservationTimes(cfg, 300);
+    std::vector<sim::Observation> forward;
+    forward.reserve(times.size());
+    for (std::size_t k = 0; k < times.size(); ++k) {
+        forward.push_back(sensor.observeAt(truth, times[k], static_cast<std::uint64_t>(k)));
+    }
 
-    std::map<double, sim::Observation> forward;
-    for (double t : ts) forward[t] = sensor.observeAt(sc.truthAt(t), t);
-
+    std::vector<std::size_t> order(times.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
     std::mt19937_64 rng(5);
-    std::shuffle(ts.begin(), ts.end(), rng);
+    std::shuffle(order.begin(), order.end(), rng);
 
     bool same = true;
-    for (double t : ts) {
-        const sim::Observation got = sensor.observeAt(sc.truthAt(t), t);
-        const sim::Observation& ref = forward.at(t);
-        if (got.valid != ref.valid) same = false;
-        if (got.valid && ref.valid && (got.p != ref.p || got.yaw != ref.yaw)) same = false;
+    for (std::size_t idx : order) {
+        const sim::Observation got = sensor.observeAt(truth, times[idx], static_cast<std::uint64_t>(idx));
+        if (got.valid != forward[idx].valid) same = false;
+        if (got.valid && forward[idx].valid && (got.p != forward[idx].p || got.n != forward[idx].n)) same = false;
     }
     check(same, "观测必须与求值顺序无关（无状态随机数）");
-
-    const sim::Observation a = sensor.observeAt(sc.truthAt(0.5), 0.5);
-    const sim::Observation b = sensor.observeAt(sc.truthAt(0.5), 0.5);
-    check(a.p == b.p && a.yaw == b.yaw && a.valid == b.valid, "同一 t 重复求值必须一致");
-}
-
-void testTriggeredAt() {
-    const sim::Scene sc = makeStaticScene();
-    sim::SensorConfig cfg;
-    cfg.dt = 0.01;
-    cfg.dropout = 0.0;
-    const sim::GaussianSensor sensor(cfg);
-
-    check(sensor.triggeredAt(0.5), "t 落在采样网格上应触发");
-    check(!sensor.triggeredAt(0.5004), "t 不在网格上不应触发");
-    checkNear(sensor.sampleTime(0.5004), 0.50, 1e-12, "sampleTime 应回到最近网格");
-
-    cfg.dropout = 0.5;
-    const sim::GaussianSensor lossy(cfg);
-    int dropped = 0;
-    for (int i = 0; i < 5000; ++i) {
-        if (!lossy.triggeredAt(static_cast<double>(i) * 0.01)) ++dropped;
-    }
-    const double frac = static_cast<double>(dropped) / 5000.0;
-    check(frac > 0.45 && frac < 0.55, "丢帧比例应接近配置值");
 }
 
 void testCameraFrame() {
-    const sim::Scene sc = makeStaticScene();
-    sim::SensorConfig cfg;
-    cfg.dt = 0.01;
-    cfg.dropout = 0.0;
+    const sim::Simulator sim = makeSim();
+    const sim::RobotTruth truth = sim.truth();
+
+    sim::SensorConfig cfg = frontCameraSensor();
     cfg.position_sigma = sim::Vec3(0.001, 0.001, 0.001);
-    cfg.camera.enabled = true;
     cfg.camera.position = sim::Vec3(2.0, -1.0, 1.5);
-    cfg.camera.target = sim::Vec3(0.0, 0.0, 0.18);
     cfg.camera.output_in_camera_frame = true;
 
     const sim::GaussianSensor sensor(cfg);
     sim::ObservationTruth anno;
-    const sim::Observation obs = sensor.observeAt(sc.truthAt(0.0), 0.0, &anno);
+    const sim::Observation obs = sensor.observeAt(truth, 0.0, 0, &anno);
 
     check(obs.valid, "相机系输出时观测应有效");
     check(obs.in_camera_frame, "in_camera_frame 标志应置位");
 
-    const sim::Vec3 ref = sc.truthAt(0.0).armors[static_cast<std::size_t>(anno.armor_index)].p;
+    const sim::Vec3 ref = truth.armors[static_cast<std::size_t>(anno.armor_index)].p;
     const double expect_range = (ref - cfg.camera.position).norm();
     checkNear(obs.p.norm(), expect_range, 1e-2, "相机系下 |p| 应等于到相机的距离");
     check(obs.p.z() > 0.0, "相机系下 z 应大于 0（在相机前方）");
+    checkNear(obs.n.norm(), 1.0, 1e-9, "相机系法向仍是单位向量");
+}
+
+// ---------------------------------------------------------------------------
+// 预设 / 配置
+// ---------------------------------------------------------------------------
+
+void testPresetCircle() {
+    sim::PresetParams p;
+    p.speed = 2.0;
+    p.radius = 1.0;
+    p.accel = 2.0;
+    p.duration = 5.0;
+
+    const auto plan = sim::makePresetControls("circle", p);
+    check(plan.size() == 2, "circle 预设应为两段（加速 + 绕圈）");
+
+    sim::Simulator sim = makeSim(makeState(), std::make_unique<sim::PlanController>(plan), 0.001);
+    sim.advanceTo(2.0);
+    checkNear(sim.state().speed, 2.0, 1e-9, "circle: 加速结束速度 = 2 m/s");
+    checkNear(sim.state().a.norm(), 4.0, 1e-6, "circle: 向心加速度 = v²/R");
+
+    sim.advanceTo(2.5);
+    const sim::Vec3 A = sim.state().p;
+    sim.advanceTo(3.0);
+    const sim::Vec3 B = sim.state().p;
+    sim.advanceTo(3.5);
+    const sim::Vec3 C = sim.state().p;
+    const double ab = (B - A).norm();
+    const double bc = (C - B).norm();
+    const double ca = (A - C).norm();
+    const double R = (ab * bc * ca) / (2.0 * (B - A).cross(C - A).norm());
+    checkNear(R, 1.0, 1e-6, "circle: 轨迹半径 = radius");
+}
+
+void testPresetNames() {
+    const auto names = sim::presetNames();
+    check(std::find(names.begin(), names.end(), "circle") != names.end(), "预设列表应包含 circle");
+    check(std::find(names.begin(), names.end(), "straight") != names.end(), "预设列表应包含 straight");
+    check(sim::makePresetControls("no_such_preset", {}).empty(), "未知预设应返回空序列");
+
+    const auto idle = sim::makePresetControls("idle", {});
+    check(idle.size() == 1 && idle[0].accel == 0.0 && idle[0].angular_rate.norm() == 0.0,
+          "idle 应为一段零控制");
 }
 
 void testConfigFiles() {
     const std::string dir = std::string(SIM_SOURCE_DIR) + "/configs/sim/";
-    for (const std::string name : {"rm_straight_spin.yaml", "rm_weave_spin.yaml"}) {
+    for (const std::string name : {"rm_straight_spin.yaml", "rm_random.yaml", "rm_circle.yaml", "rm_weave.yaml"}) {
         auto setup = sim::loadSimSetup(dir + name);
-        check(setup.scene.duration() > 0.0, name + ": duration 应 > 0（构建期零计算，duration 只是求和）");
-
-        const sim::RobotTruth tr = setup.scene.truthAt(setup.scene.duration() * 0.5);
-        check(tr.chassis.p.allFinite(), name + ": 真值必须有限");
-        check(tr.armor_count == 4, name + ": 默认 4 块装甲板");
-
+        sim::Simulator sim(setup.geometry, setup.initial, std::move(setup.controller), setup.min_dt);
         const sim::GaussianSensor sensor(setup.sensor);
-        sim::ObservationTruth anno;
-        const sim::Observation obs = sensor.observeAt(tr, setup.scene.duration() * 0.5, &anno);
-        check(obs.p.allFinite(), name + ": 观测必须有限");
-        check(!setup.scene.validate().anyWarn(), name + ": 配置不应有未声明跳变");
+
+        const auto times = sim::makeObservationTimes(setup.sensor, 120);
+        int valid = 0;
+        for (std::size_t k = 0; k < times.size(); ++k) {
+            const sim::RobotTruth tr = sim.advanceTo(times[k]);
+            sim::ObservationTruth anno;
+            const sim::Observation obs =
+                sensor.observeAt(tr, times[k], static_cast<std::uint64_t>(k), &anno);
+            if (obs.valid) ++valid;
+            check(tr.chassis.p.allFinite(), name + ": 真值必须有限");
+            check(obs.p.allFinite(), name + ": 观测必须有限");
+            checkNear(tr.chassis.t, times[k], 1e-9, name + ": 推进后时间应与观测时刻一致");
+        }
+        check(valid > 60, name + ": 大部分帧应有有效观测");
     }
 }
 
 }  // namespace
 
 int main() {
-    testOrderIndependence();
-    testQueryTimeCompute();
-    testDerivatives();
-    testAnalyticPrimitives();
-    testPhaseIntegral();
-    testContinuity();
-    testDeclaredJump();
-    testWrapContinuity();
-    testClampOutsideRange();
-    testGeometry();
-    testSpinSemantics();
+    testStraightAccel();
+    testJerk();
+    testStop();
+    testCircle();
+    testPitch();
+    testQuatStaysUnit();
+    testSplitEquivalence();
+    testMinDtConvergence();
+    testPlanDuration();
+    testExplicitControl();
+    testRandomDeterminism();
+    testArmorGeometry();
+    testObservationSchedule();
     testSensorStats();
+    testNoiseKeyedByFrame();
     testSensorDeterminism();
-    testTriggeredAt();
     testCameraFrame();
+    testPresetCircle();
+    testPresetNames();
     testConfigFiles();
 
     if (g_fail == 0) {

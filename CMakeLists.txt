@@ -12,6 +12,7 @@ endif()
 
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(yaml-cpp REQUIRED)
+find_package(OpenCV REQUIRED)
 
 if (TARGET yaml-cpp::yaml-cpp)
     set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
@@ -20,16 +21,19 @@ else()
 endif()
 
 add_library(sim_core STATIC
-    src/scene.cpp
+    src/simulator.cpp
     src/sensor.cpp
     src/config.cpp
+    src/preset.cpp
 )
 target_include_directories(sim_core PUBLIC include)
 target_link_libraries(sim_core PUBLIC Eigen3::Eigen PRIVATE ${YAML_CPP_TARGET})
 target_compile_options(sim_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(sim_demo apps/sim_demo.cpp)
-target_link_libraries(sim_demo PRIVATE sim_core)
+target_link_libraries(sim_demo PRIVATE sim_core ${OpenCV_LIBS})
+target_include_directories(sim_demo PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_compile_definitions(sim_demo PRIVATE SIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_compile_options(sim_demo PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(sim_contract_test tests/sim_contract_test.cpp)

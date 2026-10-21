@@ -2,15 +2,16 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "sim/primitives.hpp"
+#include "sim/preset.hpp"
 
 namespace sim {
 
@@ -54,6 +55,11 @@ std::uint64_t getU64(const YAML::Node& n, const char* k, std::uint64_t def) {
     }
 }
 
+std::string getS(const YAML::Node& n, const char* k, const std::string& def) {
+    if (!n[k]) return def;
+    return n[k].as<std::string>();
+}
+
 Vec3 getV3(const YAML::Node& n, const char* k, const Vec3& def) {
     if (!n[k]) return def;
     const YAML::Node v = n[k];
@@ -61,65 +67,24 @@ Vec3 getV3(const YAML::Node& n, const char* k, const Vec3& def) {
     return Vec3(v[0].as<double>(), v[1].as<double>(), v[2].as<double>());
 }
 
-/// heading 省略或写 "auto" ⇒ 继承段首速度方向。
-double getHeading(const YAML::Node& seg) {
-    if (!seg["heading"]) return kHeadingInherit;
-    const std::string s = seg["heading"].as<std::string>();
-    if (s == "auto") return kHeadingInherit;
-    try {
-        return std::stod(s);
-    } catch (...) {
-        fail("heading 既不是 auto 也不是数值: " + s);
-    }
-}
-
-/// speed 省略或写 "auto" ⇒ 继承段首水平速率（保证 C1 连续）。
-double getSpeed(const YAML::Node& seg) {
-    if (!seg["speed"]) return kSpeedInherit;
-    const std::string s = seg["speed"].as<std::string>();
-    if (s == "auto") return kSpeedInherit;
-    try {
-        return std::stod(s);
-    } catch (...) {
-        fail("speed 既不是 auto 也不是数值: " + s);
-    }
-}
-
-/// 省略 ⇒ 继承段首角速度。
-double getRate(const YAML::Node& seg, const char* key) {
-    if (!seg[key]) return kRateInherit;
-    try {
-        return seg[key].as<double>();
-    } catch (...) {
-        fail(std::string("字段 ") + key + " 不是数值");
-    }
-}
-
-std::string getS(const YAML::Node& n, const char* k, const std::string& def) {
+std::pair<double, double> getRange(const YAML::Node& n, const char* k,
+                                   const std::pair<double, double>& def) {
     if (!n[k]) return def;
-    return n[k].as<std::string>();
+    const YAML::Node v = n[k];
+    if (!v.IsSequence() || v.size() != 2) fail(std::string("字段 ") + k + " 需要 [lo, hi]");
+    const double lo = v[0].as<double>();
+    const double hi = v[1].as<double>();
+    if (hi < lo) fail(std::string("字段 ") + k + " 的 hi < lo");
+    return {lo, hi};
 }
 
-template <class Fn>
-void forEach(const YAML::Node& node, const char* what, Fn&& fn) {
-    if (!node) return;
-    if (!node.IsSequence()) fail(std::string(what) + " 必须是列表");
-    for (std::size_t i = 0; i < node.size(); ++i) {
-        if (!node[i].IsMap()) fail(std::string(what) + "[" + std::to_string(i) + "] 必须是 map");
-        fn(node[i], i);
-    }
-}
-
-void warnJunctions(const char* tag, const std::vector<JunctionReport>& rs) {
-    for (const auto& r : rs) {
-        if (!r.warn) continue;
-        std::cerr << "[sim][warn] " << tag << " 段 " << r.segment << " (t=" << r.t
-                  << "s) 未声明的不连续:"
-                  << " dp=" << r.entry_gap.dp << " dv=" << r.entry_gap.dv
-                  << " dyaw=" << r.entry_gap.dyaw << " domega=" << r.entry_gap.domega
-                  << " | 段内自造: dp=" << r.internal_gap.dp << " dv=" << r.internal_gap.dv
-                  << " dyaw=" << r.internal_gap.dyaw << " domega=" << r.internal_gap.domega << "\n";
-    }
+/// 控制段的角速度：优先 `angular_rate: [x,y,z]`，也接受 turn/pitch/roll_rate 三个标量。
+Vec3 getAngularRate(const YAML::Node& seg) {
+    Vec3 w = getV3(seg, "angular_rate", Vec3::Zero());
+    if (seg["turn_rate"]) w.z() = seg["turn_rate"].as<double>();
+    if (seg["pitch_rate"]) w.y() = seg["pitch_rate"].as<double>();
+    if (seg["roll_rate"]) w.x() = seg["roll_rate"].as<double>();
+    return w;
 }
 
 }  // namespace
@@ -133,7 +98,7 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
     }
     if (!root.IsMap()) fail("根节点必须是 map");
 
-    Scene scene;
+    SimSetup setup;
 
     // ---- robot ----
     const YAML::Node robot = root["robot"];
@@ -145,129 +110,122 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
         geom.armor_width = getD(robot, "armor_width", geom.armor_width);
         geom.armor_height = getD(robot, "armor_height", geom.armor_height);
         geom.body_radius = getD(robot, "body_radius", geom.body_radius);
-
-        const std::string mode = getS(robot, "spin_mode", "body_rotation");
-        if (mode == "body_rotation") {
-            scene.setSpinSemantics(SpinSemantics::BodyRotation);
-        } else if (mode == "armor_orbit") {
-            scene.setSpinSemantics(SpinSemantics::ArmorOrbit);
-        } else {
-            fail("spin_mode 只能是 body_rotation / armor_orbit，收到: " + mode);
-        }
     }
-    scene.setGeometry(geom);
+    setup.geometry = geom;
 
     // ---- initial ----
-    TranslationState init_tr;
-    YawState init_yaw;
-    PhaseState init_spin;
-    init_tr.p = Vec3(0.0, 0.0, 0.18);
-    const YAML::Node init = root["initial"];
-    if (init) {
-        init_tr.p = getV3(init, "position", init_tr.p);
-        init_tr.v = getV3(init, "velocity", init_tr.v);
-        init_yaw.yaw = getD(init, "yaw", init_yaw.yaw);
-        init_yaw.rate = getD(init, "yaw_rate", init_yaw.rate);
-        init_spin.phase = getD(init, "spin_phase", init_spin.phase);
-        init_spin.omega = getD(init, "spin_rate", init_spin.omega);
+    RobotState init;
+    init.p = Vec3(0.0, 0.0, 0.18);
+    if (const YAML::Node ini = root["initial"]) {
+        init.p = getV3(ini, "position", init.p);
+
+        const double yaw = getD(ini, "yaw", 0.0);
+        const double pitch = getD(ini, "pitch", 0.0);
+        const double roll = getD(ini, "roll", 0.0);
+        init.q = (Quat(Eigen::AngleAxisd(yaw, Vec3::UnitZ())) *
+                  Quat(Eigen::AngleAxisd(pitch, Vec3::UnitY())) *
+                  Quat(Eigen::AngleAxisd(roll, Vec3::UnitX())))
+                     .normalized();
+
+        // 速度沿车体 +x：把给的 world 速度投影到车头上
+        const Vec3 vel = getV3(ini, "velocity", Vec3::Zero());
+        init.speed = std::max(0.0, vel.dot(init.q * Vec3(1.0, 0.0, 0.0)));
+
+        init.omega = getV3(ini, "omega", Vec3::Zero());
+        init.spin_phase = getD(ini, "spin_phase", 0.0);
+        init.spin_rate = getD(ini, "spin_rate", 0.0);
     }
-    scene.setInitial(init_tr, init_yaw, init_spin);
+    setup.initial = init;
 
-    // ---- translation ----
-    forEach(root["translation"], "translation", [&](const YAML::Node& seg, std::size_t i) {
-        const std::string type = getS(seg, "type", "hold");
-        const double dur = getD(seg, "duration", 0.0);
+    // ---- 控制来源：preset / plan / random ----
+    if (root["preset"]) {
+        const YAML::Node pr = root["preset"];
+        PresetParams p;
+        p.speed = getD(pr, "speed", p.speed);
+        p.radius = getD(pr, "radius", p.radius);
+        p.accel = getD(pr, "accel", p.accel);
+        p.duration = getD(pr, "duration", p.duration);
 
-        TranslationState jump;
-        if (seg["jump_velocity"]) jump.v = getV3(seg, "jump_velocity", Vec3::Zero());
-
-        std::unique_ptr<ITranslationPrimitive> prim;
-        if (type == "hold") {
-            prim = std::make_unique<Hold>(dur);
-        } else if (type == "line") {
-            prim = std::make_unique<Line>(dur, getSpeed(seg), getHeading(seg), getD(seg, "vz", 0.0));
-        } else if (type == "arc") {
-            prim = std::make_unique<Arc>(dur, getSpeed(seg), getD(seg, "omega", 0.0),
-                                         getHeading(seg), getD(seg, "vz", 0.0));
-        } else if (type == "accel") {
-            prim = std::make_unique<Accel>(dur, getD(seg, "accel", 0.0), getHeading(seg), getD(seg, "vz", 0.0));
-        } else if (type == "brake") {
-            prim = std::make_unique<Brake>(dur, getD(seg, "decel", 2.0));
-        } else {
-            fail("translation[" + std::to_string(i) + "] 未知 type: " + type);
+        const std::string name = getS(pr, "name", "straight");
+        auto controls = makePresetControls(name, p);
+        if (controls.empty()) {
+            std::string known;
+            for (const auto& n : presetNames()) known += (known.empty() ? "" : ", ") + n;
+            fail("preset.name 未知或 duration<=0: " + name + "（可用: " + known + "）");
         }
-        scene.translation().add(std::move(prim), jump);
-    });
+        setup.controller = std::make_unique<PlanController>(std::move(controls));
+    } else if (root["plan"]) {
+        std::vector<Control> plan;
+        const YAML::Node list = root["plan"];
+        if (!list.IsSequence()) fail("plan 必须是列表");
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            const YAML::Node seg = list[i];
+            if (!seg.IsMap()) fail("plan[" + std::to_string(i) + "] 必须是 map");
 
-    // ---- yaw ----
-    forEach(root["yaw"], "yaw", [&](const YAML::Node& seg, std::size_t i) {
-        const std::string type = getS(seg, "type", "hold");
-        const double dur = getD(seg, "duration", 0.0);
-
-        std::unique_ptr<IYawPrimitive> prim;
-        if (type == "hold") {
-            prim = std::make_unique<YawHold>(dur);
-        } else if (type == "rate") {
-            prim = std::make_unique<YawRate>(dur, getRate(seg, "rate"));
-        } else if (type == "ramp") {
-            prim = std::make_unique<YawRamp>(dur, getRate(seg, "from"), getD(seg, "to", 0.0));
-        } else {
-            fail("yaw[" + std::to_string(i) + "] 未知 type: " + type);
+            Control c;
+            c.accel = getD(seg, "accel", c.accel);
+            c.jerk = getD(seg, "jerk", c.jerk);
+            c.angular_rate = getAngularRate(seg);
+            c.spin_rate = getD(seg, "spin_rate", c.spin_rate);
+            c.duration = getD(seg, "duration", c.duration);
+            if (!(c.duration > 0.0)) fail("plan[" + std::to_string(i) + "].duration 必须 > 0");
+            plan.push_back(c);
         }
-        scene.yaw().add(std::move(prim));
-    });
-
-    // ---- spin ----
-    forEach(root["spin"], "spin", [&](const YAML::Node& seg, std::size_t i) {
-        const std::string type = getS(seg, "type", "off");
-        const double dur = getD(seg, "duration", 0.0);
-
-        std::unique_ptr<ISpinPrimitive> prim;
-        if (type == "off") {
-            prim = std::make_unique<SpinOff>(dur);
-        } else if (type == "rate") {
-            prim = std::make_unique<SpinRate>(dur, getRate(seg, "rate"));
-        } else if (type == "ramp") {
-            prim = std::make_unique<SpinRamp>(dur, getRate(seg, "from"), getD(seg, "to", 0.0));
-        } else {
-            fail("spin[" + std::to_string(i) + "] 未知 type: " + type);
-        }
-        scene.spin().add(std::move(prim));
-    });
-
-    if (!(scene.duration() > 0.0)) fail("场景总时长为 0，检查各段 duration");
-
-    // 三条时间线长度不一致时取最短，并提示（多半是配置笔误）。
-    std::vector<std::pair<const char*, double>> durs;
-    if (!scene.translation().empty()) durs.emplace_back("translation", scene.translation().duration());
-    if (!scene.yaw().empty()) durs.emplace_back("yaw", scene.yaw().duration());
-    if (!scene.spin().empty()) durs.emplace_back("spin", scene.spin().duration());
-    for (const auto& [name, d] : durs) {
-        if (std::abs(d - scene.duration()) > 1e-9) {
-            std::cerr << "[sim][warn] " << name << " 总时长 " << d << "s 与最短的 " << scene.duration()
-                      << "s 不一致，超出部分会被截断\n";
-        }
+        setup.controller = std::make_unique<PlanController>(std::move(plan));
+    } else if (root["random"]) {
+        const YAML::Node rnd = root["random"];
+        RandomController::Config cfg;
+        cfg.seed = getU64(rnd, "seed", cfg.seed);
+        const auto dur = getRange(rnd, "duration", {cfg.min_duration, cfg.max_duration});
+        const auto acc = getRange(rnd, "accel", {cfg.min_accel, cfg.max_accel});
+        const auto turn = getRange(rnd, "turn_rate", {cfg.min_turn_rate, cfg.max_turn_rate});
+        const auto pitch = getRange(rnd, "pitch_rate", {cfg.min_pitch_rate, cfg.max_pitch_rate});
+        const auto roll = getRange(rnd, "roll_rate", {cfg.min_roll_rate, cfg.max_roll_rate});
+        const auto spin = getRange(rnd, "spin_rate", {cfg.min_spin_rate, cfg.max_spin_rate});
+        cfg.min_duration = dur.first;
+        cfg.max_duration = dur.second;
+        cfg.min_accel = acc.first;
+        cfg.max_accel = acc.second;
+        cfg.min_turn_rate = turn.first;
+        cfg.max_turn_rate = turn.second;
+        cfg.min_pitch_rate = pitch.first;
+        cfg.max_pitch_rate = pitch.second;
+        cfg.min_roll_rate = roll.first;
+        cfg.max_roll_rate = roll.second;
+        cfg.min_spin_rate = spin.first;
+        cfg.max_spin_rate = spin.second;
+        setup.controller = std::make_unique<RandomController>(cfg);
     }
 
-    const auto validation = scene.validate();
-    warnJunctions("translation", validation.translation);
-    warnJunctions("yaw", validation.yaw);
-    warnJunctions("spin", validation.spin);
+    // ---- sim ----
+    if (root["sim"]) setup.min_dt = getD(root["sim"], "min_dt", setup.min_dt);
+    if (!(setup.min_dt > 0.0)) fail("sim.min_dt 必须 > 0");
 
     // ---- sensor ----
     SensorConfig sensor;
-    const YAML::Node sen = root["sensor"];
-    if (sen) {
-        sensor.dt = getD(sen, "dt", sensor.dt);
+    if (const YAML::Node sen = root["sensor"]) {
         sensor.seed = getU64(sen, "seed", sensor.seed);
         sensor.position_sigma = getV3(sen, "position_sigma", sensor.position_sigma);
-        sensor.yaw_sigma = getD(sen, "yaw_sigma", sensor.yaw_sigma);
+        sensor.normal_sigma = getD(sen, "normal_sigma", getD(sen, "yaw_sigma", sensor.normal_sigma));
         sensor.dropout = getD(sen, "dropout", sensor.dropout);
         sensor.max_range = getD(sen, "max_range", sensor.max_range);
         sensor.facing_min_cos = getD(sen, "facing_min_cos", sensor.facing_min_cos);
 
-        const YAML::Node cam = sen["camera"];
-        if (cam) {
+        if (const YAML::Node sch = sen["schedule"]) {
+            sensor.t0 = getD(sch, "t0", sensor.t0);
+            sensor.interval = getD(sch, "interval", sensor.interval);
+            sensor.jitter = getD(sch, "jitter", sensor.jitter);
+            if (sch["intervals"]) {
+                if (!sch["intervals"].IsSequence()) fail("sensor.schedule.intervals 必须是列表");
+                for (std::size_t i = 0; i < sch["intervals"].size(); ++i) {
+                    sensor.intervals.push_back(sch["intervals"][i].as<double>());
+                }
+            }
+        }
+        if (!(sensor.interval > 0.0)) fail("sensor.schedule.interval 必须 > 0");
+        if (sensor.jitter < 0.0) fail("sensor.schedule.jitter 必须 >= 0");
+
+        if (const YAML::Node cam = sen["camera"]) {
             sensor.camera.enabled = getB(cam, "enabled", true);
             sensor.camera.position = getV3(cam, "position", sensor.camera.position);
             sensor.camera.target = getV3(cam, "target", sensor.camera.target);
@@ -275,9 +233,9 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
             sensor.camera.output_in_camera_frame = getB(cam, "output_in_camera_frame", false);
         }
     }
-    if (sensor.dt <= 0.0) fail("sensor.dt 必须 > 0");
+    setup.sensor = sensor;
 
-    return SimSetup{std::move(scene), sensor, yaml_path};
+    return setup;
 }
 
 }  // namespace sim
