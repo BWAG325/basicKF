@@ -107,10 +107,41 @@ preset:
   speed: 2.0
   radius: 1.0         # 负值 = 顺时针
   accel: 2.0
-  duration: 6.0
+  duration: 6.0       # forever=true 时只限制加速段
+  forever: true       # 默认 true：加速完成后一直绕圈，不会停
 ```
 
+- `forever: true`（默认）：最后一段时长是无穷，可以一直 `advanceTo` 下去，适合反复看波形；
+- `forever: false`：跑完 `duration` 后回到零控制（滑行/停）；
+- `random` 模式本来就是无限生成的，不受此开关影响；
+- `plan` 模式默认是有限列表；加 `loop: true` 后**每圈重置回初值重放**（见下）。
+
 加新预设：在 `src/preset.cpp` 写一个生成函数，再在 `makePresetControls` 和 `presetNames()` 里各加一行。
+
+## plan 循环与接缝检查
+
+```yaml
+loop: true
+plan:
+  - {duration: 1.0, accel: 2.0}
+  - {duration: 2.0, turn_rate: 1.2}
+  - {duration: 1.0, accel: -2.0}
+```
+
+`loop: true` 的语义是 **每圈结束把物理状态重置回初值再重放**（仿真时钟继续走），
+所以波形严格重复；接缝处会真实发生速度/位置跳变。
+
+装载时会先把整圈跑一遍，和初值比较：
+
+| 指标 | 阈值 | 处理 |
+|---|---|---|
+| `|Δv|` 速度差 | > 0.05 m/s | **警告**（重放瞬间速度跳变） |
+| `Δθ` 姿态差 | > 0.05 rad | **警告** |
+| `|Δp|` 位置差 | —— | 仅提示 |
+
+也可以直接调 `sim::checkPlanSeam(geom, initial, plan, min_dt)` 自己检查。
+
+示例：[configs/sim/rm_loop.yaml](configs/sim/rm_loop.yaml)（闭合，`|Δv| ≈ 1e-12`）。
 
 ## 观测时刻表（非均匀）
 

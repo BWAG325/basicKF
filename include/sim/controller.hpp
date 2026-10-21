@@ -19,18 +19,44 @@ namespace sim {
 class IController {
 public:
     virtual ~IController() = default;
+
     [[nodiscard]] virtual Control next(const RobotState& state) = 0;
+
+    /// 取完 next() 后，若控制器要求把物理状态重置回初值（plan 循环），返回 true。
+    virtual bool consumeReset() { return false; }
+
+    /// 仿真器 reset() 时会调用。
+    virtual void reset() {}
 };
 
 /// 预排计划：按顺序发放控制段，用完之后回到「零控制」（滑行 + 停止自转）。
 class PlanController final : public IController {
 public:
-    explicit PlanController(std::vector<Control> plan) : plan_(std::move(plan)) {}
+    explicit PlanController(std::vector<Control> plan, bool loop = false)
+        : plan_(std::move(plan)), loop_(loop) {}
 
     [[nodiscard]] Control next(const RobotState&) override {
-        if (i_ < plan_.size()) return plan_[i_++];
-        return Control{};
+        if (plan_.empty()) return Control{};
+        if (i_ >= plan_.size()) {
+            if (!loop_) return Control{};
+            i_ = 0;
+            reset_pending_ = true;  // 循环：先把状态重置回初值，再放第一段
+        }
+        return plan_[i_++];
     }
+
+    [[nodiscard]] bool consumeReset() override {
+        const bool r = reset_pending_;
+        reset_pending_ = false;
+        return r;
+    }
+
+    void reset() override {
+        i_ = 0;
+        reset_pending_ = false;
+    }
+
+    [[nodiscard]] bool loops() const { return loop_; }
 
     [[nodiscard]] std::size_t remaining() const { return plan_.size() - i_; }
     [[nodiscard]] bool finished() const { return i_ >= plan_.size(); }
@@ -38,6 +64,8 @@ public:
 private:
     std::vector<Control> plan_;
     std::size_t i_ = 0;
+    bool loop_ = false;
+    bool reset_pending_ = false;
 };
 
 /// 随机运动：每段控制随机抽参数（含 duration），用同一个 seed 可复现。
@@ -61,6 +89,8 @@ public:
 
     RandomController() : RandomController(Config{}) {}
     explicit RandomController(Config cfg) : cfg_(cfg), rng_(cfg.seed) {}
+
+    void reset() override { rng_ = Rng(cfg_.seed); }
 
     [[nodiscard]] Control next(const RobotState&) override {
         Control c;

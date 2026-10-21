@@ -22,6 +22,12 @@ RobotTruth Simulator::advanceTo(double t_end) {
     while (state_.t < t_end - kEps) {
         if (!has_current_ || remain_ <= kEps) {
             current_ = ctrl_ ? ctrl_->next(state_) : Control{};
+            if (ctrl_ && ctrl_->consumeReset()) {
+                // plan 循环：物理状态回到初值，但仿真时钟继续走
+                const double now = state_.t;
+                state_ = init_;
+                state_.t = now;
+            }
             if (!(current_.duration > 0.0)) current_.duration = t_end - state_.t;  // 防死循环
             remain_ = current_.duration;
             segment_time_ = 0.0;

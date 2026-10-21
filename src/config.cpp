@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -137,6 +138,10 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
     }
     setup.initial = init;
 
+    // ---- sim ----
+    if (root["sim"]) setup.min_dt = getD(root["sim"], "min_dt", setup.min_dt);
+    if (!(setup.min_dt > 0.0)) fail("sim.min_dt 必须 > 0");
+
     // ---- 控制来源：preset / plan / random ----
     if (root["preset"]) {
         const YAML::Node pr = root["preset"];
@@ -145,6 +150,7 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
         p.radius = getD(pr, "radius", p.radius);
         p.accel = getD(pr, "accel", p.accel);
         p.duration = getD(pr, "duration", p.duration);
+        p.forever = getB(pr, "forever", p.forever);
 
         const std::string name = getS(pr, "name", "straight");
         auto controls = makePresetControls(name, p);
@@ -171,7 +177,21 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
             if (!(c.duration > 0.0)) fail("plan[" + std::to_string(i) + "].duration 必须 > 0");
             plan.push_back(c);
         }
-        setup.controller = std::make_unique<PlanController>(std::move(plan));
+        const bool loop = getB(root, "loop", false);
+        if (loop) {
+            const PlanSeam seam = checkPlanSeam(geom, init, plan, setup.min_dt);
+            if (seam.warn) {
+                std::cerr << "[sim][warn] plan 循环接缝跳变: |Δv| = " << seam.dv
+                          << " m/s, |Δp| = " << seam.dp << " m, Δθ = " << seam.dtheta
+                          << " rad —— 每圈结束会重置回初值，速度/位置会瞬移\n";
+            } else {
+                std::cerr << "[sim] plan 循环接缝闭合（重放无跳变，|Δv| = " << seam.dv
+                          << " m/s, Δθ = " << seam.dtheta << " rad）\n";
+            }
+        } else if (root["loop"]) {
+            std::cerr << "[sim][warn] loop 只对 plan 模式生效，当前配置会忽略它\n";
+        }
+        setup.controller = std::make_unique<PlanController>(std::move(plan), loop);
     } else if (root["random"]) {
         const YAML::Node rnd = root["random"];
         RandomController::Config cfg;
@@ -196,10 +216,6 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
         cfg.max_spin_rate = spin.second;
         setup.controller = std::make_unique<RandomController>(cfg);
     }
-
-    // ---- sim ----
-    if (root["sim"]) setup.min_dt = getD(root["sim"], "min_dt", setup.min_dt);
-    if (!(setup.min_dt > 0.0)) fail("sim.min_dt 必须 > 0");
 
     // ---- sensor ----
     SensorConfig sensor;
@@ -236,6 +252,30 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
     setup.sensor = sensor;
 
     return setup;
+}
+
+}  // namespace sim
+
+namespace sim {
+
+PlanSeam checkPlanSeam(const RobotGeometry& geom, const RobotState& initial,
+                       const std::vector<Control>& plan, double min_dt) {
+    PlanSeam out;
+    if (plan.empty()) return out;
+
+    Simulator sim(geom, initial, std::make_unique<PlanController>(plan, false), min_dt);
+
+    double total = 0.0;
+    for (const auto& c : plan) total += std::max(0.0, c.duration);
+    sim.advanceTo(total);
+
+    const RobotState& end = sim.state();
+    out.dv = (end.v - initial.v).norm();
+    out.dp = (end.p - initial.p).norm();
+    const double dot = std::clamp(std::abs(end.q.dot(initial.q)), 0.0, 1.0);
+    out.dtheta = 2.0 * std::acos(dot);
+    out.warn = out.dv > 0.05 || out.dtheta > 0.05;
+    return out;
 }
 
 }  // namespace sim

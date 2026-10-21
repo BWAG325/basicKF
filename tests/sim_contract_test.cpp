@@ -216,6 +216,47 @@ void testExplicitControl() {
     check(sim.state().speed > v_before, "之后回到计划继续加速");
 }
 
+void testPlanLoop() {
+    std::vector<sim::Control> plan(1);
+    plan[0].angular_rate = sim::Vec3(0.0, 0.0, 1.0);
+    plan[0].duration = 0.5;
+
+    // 循环 = 每圈结束重置回初值重放：t = k·0.5 + r 的状态应等于非循环仿真 t = r 的状态
+    sim::Simulator loopSim(makeGeom(), makeState(2.0),
+                           std::make_unique<sim::PlanController>(plan, true), 0.001);
+    sim::Simulator ref(makeGeom(), makeState(2.0),
+                       std::make_unique<sim::PlanController>(plan, false), 0.001);
+
+    loopSim.advanceTo(2.25);  // 4 圈 + 0.25
+    ref.advanceTo(0.25);
+
+    checkNear((loopSim.state().p - ref.state().p).norm(), 0.0, 1e-9, "循环每圈重置回初值（位置）");
+    checkNear((loopSim.state().v - ref.state().v).norm(), 0.0, 1e-9, "循环每圈重置回初值（速度）");
+    checkNear(loopSim.time(), 2.25, 1e-12, "仿真时钟不回退");
+}
+
+void testPlanSeam() {
+    sim::RobotGeometry g;
+    g.armor_count = 4;
+    const sim::RobotState init = makeState();
+
+    std::vector<sim::Control> accel_only(1);
+    accel_only[0].accel = 2.0;
+    accel_only[0].duration = 1.0;
+    const auto bad = sim::checkPlanSeam(g, init, accel_only, 1e-3);
+    check(bad.warn, "只加速、不回初速 → 接缝应告警");
+    checkNear(bad.dv, 2.0, 1e-6, "接缝速度差应等于末速度");
+
+    std::vector<sim::Control> closed(2);
+    closed[0].accel = 2.0;
+    closed[0].duration = 1.0;
+    closed[1].accel = -2.0;
+    closed[1].duration = 1.0;
+    const auto good = sim::checkPlanSeam(g, init, closed, 1e-3);
+    check(!good.warn, "加速后等减速回 0 → 接缝闭合");
+    checkNear(good.dv, 0.0, 1e-9, "闭合时速度差为 0");
+}
+
 void testRandomDeterminism() {
     sim::RandomController::Config cfg;
     cfg.seed = 5;
@@ -457,6 +498,39 @@ void testPresetCircle() {
     checkNear(R, 1.0, 1e-6, "circle: 轨迹半径 = radius");
 }
 
+void testPresetForever() {
+    sim::PresetParams p;
+    p.speed = 2.0;
+    p.radius = 1.0;
+    p.accel = 2.0;
+    p.duration = 5.0;
+    p.forever = true;
+
+    const auto plan = sim::makePresetControls("circle", p);
+    check(plan.size() == 2, "circle forever 仍为两段");
+    check(std::isinf(plan.back().duration), "forever: 最后一段时长应为无穷");
+
+    sim::Simulator sim = makeSim(makeState(), std::make_unique<sim::PlanController>(plan), 0.001);
+    sim.advanceTo(30.0);
+    checkNear(sim.state().speed, 2.0, 1e-9, "forever: 30s 后仍保持 2 m/s");
+    checkNear(sim.state().a.norm(), 4.0, 1e-6, "forever: 向心加速度保持");
+
+    sim.advanceTo(30.5);
+    const sim::Vec3 A = sim.state().p;
+    sim.advanceTo(31.0);
+    const sim::Vec3 B = sim.state().p;
+    sim.advanceTo(31.5);
+    const sim::Vec3 C = sim.state().p;
+    const double R = ((B - A).norm() * (C - B).norm() * (A - C).norm()) /
+                     (2.0 * (B - A).cross(C - A).norm());
+    checkNear(R, 1.0, 1e-6, "forever: 半径始终保持不变");
+
+    // 有限模式仍然会结束
+    p.forever = false;
+    const auto finite = sim::makePresetControls("circle", p);
+    check(!std::isinf(finite.back().duration), "forever=false 时最后一段应有限");
+}
+
 void testPresetNames() {
     const auto names = sim::presetNames();
     check(std::find(names.begin(), names.end(), "circle") != names.end(), "预设列表应包含 circle");
@@ -470,7 +544,7 @@ void testPresetNames() {
 
 void testConfigFiles() {
     const std::string dir = std::string(SIM_SOURCE_DIR) + "/configs/sim/";
-    for (const std::string name : {"rm_straight_spin.yaml", "rm_random.yaml", "rm_circle.yaml", "rm_weave.yaml"}) {
+    for (const std::string name : {"rm_straight_spin.yaml", "rm_random.yaml", "rm_circle.yaml", "rm_weave.yaml", "rm_loop.yaml"}) {
         auto setup = sim::loadSimSetup(dir + name);
         sim::Simulator sim(setup.geometry, setup.initial, std::move(setup.controller), setup.min_dt);
         const sim::GaussianSensor sensor(setup.sensor);
@@ -503,6 +577,8 @@ int main() {
     testSplitEquivalence();
     testMinDtConvergence();
     testPlanDuration();
+    testPlanLoop();
+    testPlanSeam();
     testExplicitControl();
     testRandomDeterminism();
     testArmorGeometry();
@@ -512,6 +588,7 @@ int main() {
     testSensorDeterminism();
     testCameraFrame();
     testPresetCircle();
+    testPresetForever();
     testPresetNames();
     testConfigFiles();
 

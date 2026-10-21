@@ -25,6 +25,7 @@ preset:
   radius: 1.0         # 圆周半径 [m]（负值 = 顺时针）
   accel: 2.0          # 起步加速度 [m/s²]
   duration: 6.0
+  forever: true       # 加速段之后一直绕圈（调试卡尔曼时可反复看波形）
 
 sensor:
   schedule:

@@ -23,6 +23,7 @@ public:
 
     void setController(std::unique_ptr<IController> c) { ctrl_ = std::move(c); }
     void reset() {
+        if (ctrl_) ctrl_->reset();
         state_ = init_;
         current_ = Control{};
         remain_ = 0.0;

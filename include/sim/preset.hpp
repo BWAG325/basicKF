@@ -12,7 +12,8 @@ struct PresetParams {
     double speed = 2.0;     ///< 目标线速度 [m/s]
     double radius = 1.0;    ///< 圆周半径 [m]（负值 = 顺时针）
     double accel = 2.0;     ///< 起步加速度 [m/s²]
-    double duration = 5.0;  ///< 总时长 [s]
+    double duration = 5.0;  ///< 时长 [s]：forever=true 时只限制加速段
+    bool forever = true;    ///< 最后一段是否无限持续（调试卡尔曼时常用）
 };
 
 /// 预设运动 → 控制序列。

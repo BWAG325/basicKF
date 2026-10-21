@@ -2,20 +2,23 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace sim {
 
 namespace {
 
-/// 从静止加速到 speed，然后匀速跑到 duration。
+constexpr double kForever = std::numeric_limits<double>::infinity();
+
+/// 从静止加速到 speed，然后匀速（forever 时无限持续）。
 std::vector<Control> straightPlan(const PresetParams& p) {
     std::vector<Control> out;
-    if (!(p.duration > 0.0)) return out;
+    if (!(p.duration > 0.0) && !p.forever) return out;
 
     const double v = std::max(0.0, p.speed);
     const double a = std::max(1e-6, std::abs(p.accel));
-    const double t_acc = (v > 0.0) ? std::min(p.duration, v / a) : 0.0;
+    const double t_acc = (v > 0.0) ? (p.forever ? v / a : std::min(p.duration, v / a)) : 0.0;
 
     if (t_acc > 0.0) {
         Control c;
@@ -23,9 +26,10 @@ std::vector<Control> straightPlan(const PresetParams& p) {
         c.duration = t_acc;
         out.push_back(c);
     }
-    if (p.duration - t_acc > 0.0) {
+    const double cruise = p.forever ? kForever : (p.duration - t_acc);
+    if (cruise > 0.0) {
         Control c;
-        c.duration = p.duration - t_acc;
+        c.duration = cruise;
         out.push_back(c);
     }
     return out;
@@ -36,7 +40,7 @@ std::vector<Control> straightPlan(const PresetParams& p) {
 std::vector<Control> makePresetControls(const std::string& name, const PresetParams& p) {
     if (name == "idle") {
         Control c;
-        c.duration = p.duration;
+        c.duration = p.forever ? kForever : p.duration;
         return {c};
     }
 

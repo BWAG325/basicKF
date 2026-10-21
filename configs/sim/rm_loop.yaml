@@ -1,0 +1,47 @@
+# 循环计划：加速 → 左右各转一次 → 减速回 0；loop=true 时每圈结束重置回初值重放
+# 接缝检查：末速度/姿态与初值一致（速度闭合），所以重放时不会有速度跳变
+
+sim:
+  min_dt: 0.001
+
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+
+initial:
+  position: [0.0, 0.0, 0.18]
+  velocity: [0.0, 0.0, 0.0]
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+
+loop: true
+
+plan:
+  - {duration: 0.5}
+  - {duration: 1.0, accel: 2.0}
+  - {duration: 2.0, turn_rate: 1.2}
+  - {duration: 2.0, turn_rate: -1.2}
+  - {duration: 1.0, accel: -2.0}
+
+sensor:
+  schedule:
+    t0: 0.0
+    interval: 0.04
+    jitter: 0.015
+  seed: 55
+  position_sigma: [0.01, 0.01, 0.01]
+  normal_sigma: 0.01
+  dropout: 0.02
+  max_range: 20.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [3.0, -6.0, 2.5]
+    target: [1.0, 0.0, 0.2]
+    fov_half_deg: 45.0
+    output_in_camera_frame: false
