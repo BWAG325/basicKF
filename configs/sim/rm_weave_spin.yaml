@@ -1,0 +1,50 @@
+# RM 车运动场景：小陀螺 + 左右画弧（换向），最后反转自转
+# 总时长 6.0 s，三条时间线长度一致。
+
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+  spin_mode: body_rotation
+
+initial:
+  position: [0.0, 0.0, 0.18]
+  velocity: [0.0, 0.0, 0.0]
+  yaw: 0.0
+  spin_phase: 0.0
+  spin_rate: 6.0
+
+translation:
+  - {type: hold,  duration: 0.4}
+  - {type: accel, duration: 1.0, accel: 2.0}              # 0 → 2.0 m/s
+  - {type: arc,   duration: 0.9, omega: 2.0}              # 左弧
+  - {type: arc,   duration: 1.8, omega: -2.0}             # 右弧（换向）
+  - {type: arc,   duration: 0.9, omega: 2.0}              # 再左
+  - {type: line,  duration: 0.5}                          # speed/heading 继承
+  - {type: brake, duration: 0.5, decel: 4.0}
+
+yaw:
+  - {type: hold, duration: 6.0}
+
+spin:
+  - {type: rate, duration: 2.5, rate: 6.0}
+  - {type: ramp, duration: 0.5, from: 6.0, to: -6.0}      # 反向
+  - {type: rate, duration: 3.0, rate: -6.0}
+
+sensor:
+  dt: 0.01
+  seed: 7
+  position_sigma: [0.01, 0.01, 0.01]
+  yaw_sigma: 0.01
+  dropout: 0.05
+  max_range: 20.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [3.0, -6.0, 2.0]
+    target: [2.5, 0.0, 0.2]
+    fov_half_deg: 40.0
+    output_in_camera_frame: false

@@ -1,0 +1,48 @@
+# RM 车运动场景：起步 → 直线冲刺 → 左转 → 刹停；1.1s 后开始小陀螺
+# 总时长 5.0 s，三条时间线长度一致。
+
+robot:
+  armors: 4
+  armor_radius: 0.22        # 板中心到旋转轴的距离 [m]（占位值，按车型改）
+  armor_dz: 0.0             # 板中心相对 chassis.p.z [m]
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+  spin_mode: body_rotation  # body_rotation（小陀螺）/ armor_orbit（车体朝向独立）
+
+initial:
+  position: [0.0, 0.0, 0.18]  # 车体中心（装甲板平面高度），z 向上
+  velocity: [0.0, 0.0, 0.0]
+  yaw: 0.0                    # 车体朝向 [rad]
+  spin_phase: 0.0
+  spin_rate: 0.0
+
+translation:
+  - {type: hold,  duration: 0.5}
+  - {type: accel, duration: 1.0, accel: 2.5}       # 0 → 2.5 m/s
+  - {type: line,  duration: 1.8, speed: 2.5, heading: 0.0}
+  - {type: arc,   duration: 1.2, speed: 2.5, omega: 1.2}   # 左转
+  - {type: brake, duration: 0.5, decel: 5.0}       # 2.5 / 5.0 = 0.5 s 正好停住
+
+yaw:
+  - {type: hold, duration: 5.0}
+
+spin:
+  - {type: off,  duration: 0.5}
+  - {type: ramp, duration: 0.6, from: 0.0, to: 9.0}
+  - {type: rate, duration: 3.9, rate: 9.0}
+
+sensor:
+  dt: 0.01
+  seed: 42
+  position_sigma: [0.01, 0.01, 0.01]   # 先按对称高斯占位，PnP 误差特性后续再替换
+  yaw_sigma: 0.01
+  dropout: 0.02
+  max_range: 20.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [2.0, -8.0, 2.5]
+    target: [2.5, 0.0, 0.2]
+    fov_half_deg: 40.0
+    output_in_camera_frame: false

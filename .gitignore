@@ -113,3 +113,5 @@ Thumbs.db
 # --------
 *.dll
 *.exe
+# cmake build dirs
+/build/
