@@ -1,4 +1,4 @@
-#include "sim/sensor.hpp"
+#include "sim/sensing/sensor.hpp"
 
 #include <algorithm>
 #include <cmath>

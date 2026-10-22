@@ -11,7 +11,7 @@
 
 #include "kf/models/cv.hpp"
 #include "sim/config.hpp"
-#include "sim/sensor.hpp"
+#include "sim/sensing/sensor.hpp"
 #include "sim/simulator.hpp"
 
 // 跑一个最简单的 CV 卡尔曼：模拟器出真值/观测，滤波器只吃观测位置。

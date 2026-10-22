@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "sim/config.hpp"
-#include "sim/sensor.hpp"
+#include "sim/sensing/sensor.hpp"
 #include "sim/simulator.hpp"
 
 // 与 auto_aim_/tests 一致的参数传入方式：cv::CommandLineParser + keys 默认值。

@@ -2,10 +2,10 @@
 
 #include <memory>
 
-#include "sim/controller.hpp"
-#include "sim/integrator.hpp"
-#include "sim/robot_model.hpp"
-#include "sim/types.hpp"
+#include "sim/motion/controller.hpp"
+#include "sim/motion/integrator.hpp"
+#include "sim/robot/robot_model.hpp"
+#include "sim/core/types.hpp"
 
 namespace sim {
 

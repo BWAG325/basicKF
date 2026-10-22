@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "sim/types.hpp"
+#include "sim/core/types.hpp"
 
 namespace sim {
 

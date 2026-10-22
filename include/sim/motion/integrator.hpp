@@ -4,7 +4,7 @@
 #include <cmath>
 #include <limits>
 
-#include "sim/types.hpp"
+#include "sim/core/types.hpp"
 
 namespace sim {
 

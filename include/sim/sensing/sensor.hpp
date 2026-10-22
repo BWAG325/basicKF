@@ -6,8 +6,8 @@
 
 #include <Eigen/Geometry>
 
-#include "sim/random.hpp"
-#include "sim/types.hpp"
+#include "sim/core/random.hpp"
+#include "sim/core/types.hpp"
 
 namespace sim {
 

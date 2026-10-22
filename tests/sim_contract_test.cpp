@@ -11,10 +11,10 @@
 #include <vector>
 
 #include "sim/config.hpp"
-#include "sim/controller.hpp"
-#include "sim/integrator.hpp"
-#include "sim/preset.hpp"
-#include "sim/sensor.hpp"
+#include "sim/motion/controller.hpp"
+#include "sim/motion/integrator.hpp"
+#include "sim/motion/preset.hpp"
+#include "sim/sensing/sensor.hpp"
 #include "sim/simulator.hpp"
 
 namespace {

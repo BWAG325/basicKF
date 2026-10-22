@@ -25,10 +25,10 @@ target_include_directories(kf_core INTERFACE include)
 target_link_libraries(kf_core INTERFACE Eigen3::Eigen)
 
 add_library(sim_core STATIC
-    src/simulator.cpp
-    src/sensor.cpp
     src/config.cpp
-    src/preset.cpp
+    src/simulator.cpp
+    src/motion/preset.cpp
+    src/sensing/sensor.cpp
 )
 target_include_directories(sim_core PUBLIC include)
 target_link_libraries(sim_core PUBLIC Eigen3::Eigen PRIVATE ${YAML_CPP_TARGET})

@@ -130,7 +130,7 @@ preset:
 - `random` 模式本来就是无限生成的，不受此开关影响；
 - `plan` 模式默认是有限列表；加 `loop: true` 后**每圈重置回初值重放**（见下）。
 
-加新预设：在 `src/preset.cpp` 写一个生成函数，再在 `makePresetControls` 和 `presetNames()` 里各加一行。
+加新预设：在 `src/motion/preset.cpp` 写一个生成函数，再在 `makePresetControls` 和 `presetNames()` 里各加一行。
 
 ## plan 循环与接缝检查
 
@@ -172,15 +172,32 @@ sensor:
 
 ## 代码结构
 
-| 文件 | 职责 |
-|---|---|
-| [types.hpp](include/sim/types.hpp) | `Control` / `RobotState` / `RobotTruth` / `Observation` |
-| [integrator.hpp](include/sim/integrator.hpp) | 四元数姿态 + Simpson 位置积分 |
-| [controller.hpp](include/sim/controller.hpp) | `IController` + `PlanController` + `RandomController`（键盘预留） |
-| [simulator.hpp](include/sim/simulator.hpp) / [simulator.cpp](src/simulator.cpp) | 状态机、`step` / `advanceTo`、`truth()` |
-| [robot_model.hpp](include/sim/robot_model.hpp) | 车体系装甲环 → 世界系位姿（纯函数） |
-| [sensor.hpp](include/sim/sensor.hpp) / [sensor.cpp](src/sensor.cpp) | 观测时刻表 + 位置/法向噪声 |
-| [config.hpp](include/sim/config.hpp) / [config.cpp](src/config.cpp) | YAML 装配 |
+```text
+include/sim/
+├── core/                数据契约与小工具（不依赖其他层）
+│   ├── types.hpp          Control / RobotState / RobotTruth / Observation
+│   ├── angle.hpp          角度归一化
+│   └── random.hpp         无状态随机数
+├── motion/              运动与推进（只依赖 core）
+│   ├── integrator.hpp     四元数姿态 + Simpson 位置积分
+│   ├── controller.hpp     IController / PlanController / RandomController
+│   └── preset.hpp         预设 → 控制序列
+├── robot/               车体几何（只依赖 core）
+│   └── robot_model.hpp    车体系装甲环 → 世界系位姿（纯函数）
+├── sensing/             观测（只依赖 core）
+│   └── sensor.hpp         观测时刻表 + 位置/法向噪声
+├── simulator.hpp        状态机：step / advanceTo / truth
+└── config.hpp           YAML 装配（最外层）
+
+src/
+├── config.cpp
+├── simulator.cpp
+├── motion/preset.cpp
+└── sensing/sensor.cpp
+```
+
+依赖方向是单向的：`core` ← `motion/robot/sensing` ← `simulator` ← `config/apps`。
+卡尔曼部分在 `include/kf/`，同样按 `filter_interface`（接口）/ `kalman_filter`（核心）/ `models/cv`（模型）分层。
 
 ## 键盘控制（预留，未实现）
 

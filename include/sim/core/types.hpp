@@ -9,7 +9,7 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
-#include "sim/angle.hpp"
+#include "sim/core/angle.hpp"
 
 namespace sim {
 

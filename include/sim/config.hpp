@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "sim/controller.hpp"
-#include "sim/sensor.hpp"
+#include "sim/motion/controller.hpp"
+#include "sim/sensing/sensor.hpp"
 #include "sim/simulator.hpp"
 
 namespace sim {

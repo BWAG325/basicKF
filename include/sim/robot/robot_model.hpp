@@ -4,7 +4,7 @@
 #include <array>
 #include <cmath>
 
-#include "sim/types.hpp"
+#include "sim/core/types.hpp"
 
 namespace sim {
 
