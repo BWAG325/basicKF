@@ -1,0 +1,46 @@
+# 小陀螺 + 椭圆巡航：底盘沿椭圆匀速跑，装甲环 spin_rate 持续自转
+# 初始位姿必须放在 (a, 0)、朝向 +y（椭圆切线方向）
+
+sim:
+  min_dt: 0.001
+
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+
+initial:
+  position: [2.0, 0.0, 0.18]
+  velocity: [0.0, 1.5, 0.0]
+  yaw: 1.5707963267948966
+  pitch: 0.0
+  roll: 0.0
+  spin_phase: 0.0
+
+ellipse:
+  a: 2.0
+  b: 1.2
+  speed: 1.5
+  spin_rate: 6.0
+  segment: 0.005
+
+sensor:
+  schedule:
+    t0: 0.0
+    interval: 0.04
+    jitter: 0.01
+  seed: 9
+  position_sigma: [0.02, 0.02, 0.02]
+  normal_sigma: 0.01
+  dropout: 0.02
+  max_range: 40.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [0.0, -14.0, 4.0]
+    target: [0.0, 0.0, 0.2]
+    fov_half_deg: 65.0
+    output_in_camera_frame: false

@@ -566,6 +566,41 @@ void testConfigFiles() {
     }
 }
 
+void testEllipseController() {
+    const std::string dir = sim::resolvePath("configs/sim/");
+    auto setup = sim::loadSimSetup(dir + "rm_ellipse_spin.yaml");
+    sim::Simulator sim(setup.geometry, setup.initial, std::move(setup.controller), setup.min_dt);
+
+    const double a = 2.0, b = 1.2;
+    double max_err = 0.0;
+    for (int k = 0; k <= 500; ++k) {
+        sim.advanceTo(k * 0.02);
+        const sim::Vec3 p = sim.truth().chassis.p;
+        const double e = std::abs(p.x() * p.x() / (a * a) + p.y() * p.y() / (b * b) - 1.0);
+        max_err = std::max(max_err, e);
+    }
+    check(max_err < 0.03, "ellipse: 轨迹应落在 x²/a² + y²/b² = 1 上（max_err=" +
+                              std::to_string(max_err) + "）");
+
+    // 变速版：轨迹仍在椭圆上，且速度确实有起伏
+    auto setup2 = sim::loadSimSetup(dir + "rm_ellipse_var_spin.yaml");
+    sim::Simulator sim2(setup2.geometry, setup2.initial, std::move(setup2.controller), setup2.min_dt);
+    double max_err2 = 0.0;
+    double vmin = 1e9, vmax = -1e9;
+    for (int k = 0; k <= 800; ++k) {
+        sim2.advanceTo(k * 0.02);
+        const sim::RobotTruth tr = sim2.truth();
+        const sim::Vec3 p = tr.chassis.p;
+        max_err2 = std::max(max_err2, std::abs(p.x() * p.x() / (a * a) + p.y() * p.y() / (b * b) - 1.0));
+        const double v = tr.chassis.v.norm();
+        vmin = std::min(vmin, v);
+        vmax = std::max(vmax, v);
+    }
+    check(max_err2 < 0.04, "ellipse(var): 变速时轨迹仍应在椭圆上（max_err=" +
+                               std::to_string(max_err2) + "）");
+    check(vmax / std::max(1e-6, vmin) > 1.3, "ellipse(var): 速度应有明显起伏");
+}
+
 }  // namespace
 
 int main() {
@@ -592,6 +627,7 @@ int main() {
     testPresetForever();
     testPresetNames();
     testConfigFiles();
+    testEllipseController();
 
     if (g_fail == 0) {
         std::cout << "all sim contract tests passed\n";

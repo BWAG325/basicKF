@@ -69,8 +69,38 @@ bool GaussianSensor::inFov(const Vec3& p_world) const {
     return ang <= cfg_.camera.fov_half_deg * kPi / 180.0;
 }
 
+int GaussianSensor::pickArmor(const RobotTruth& truth) const {
+    if (!cfg_.camera.enabled) return truth.armor_count > 0 ? 0 : -1;
+
+    const int count = std::clamp(truth.armor_count, 0, kMaxArmors);
+    int best = -1;
+    double best_facing = -2.0;
+
+    for (int i = 0; i < count; ++i) {
+        const ArmorTruth& a = truth.armors[static_cast<std::size_t>(i)];
+        const Vec3 d = cfg_.camera.position - a.p;
+        const double range = d.norm();
+        if (range > cfg_.max_range) continue;
+        if (!inFov(a.p)) continue;
+
+        const double facing = a.n.dot(d / range);
+        if (facing < cfg_.facing_min_cos) continue;
+        if (facing > best_facing) {
+            best_facing = facing;
+            best = i;
+        }
+    }
+    return best;
+}
+
 Observation GaussianSensor::observeAt(const RobotTruth& truth, double t, std::uint64_t frame_index,
                                       ObservationTruth* anno) const {
+    return observeArmorAt(truth, t, frame_index, -1, anno);
+}
+
+Observation GaussianSensor::observeArmorAt(const RobotTruth& truth, double t,
+                                           std::uint64_t frame_index, int armor_index,
+                                           ObservationTruth* anno) const {
     Observation obs;
     obs.t = t;
     obs.in_camera_frame = cfg_.camera.enabled && cfg_.camera.output_in_camera_frame;
@@ -84,37 +114,61 @@ Observation GaussianSensor::observeAt(const RobotTruth& truth, double t, std::ui
     const int count = std::clamp(truth.armor_count, 0, kMaxArmors);
 
     int best = -1;
-    double best_facing = -2.0;
+    double best_facing = 0.0;
     double best_range = 0.0;
     bool any_in_fov = false;
     bool any_in_range = false;
 
-    for (int i = 0; i < count; ++i) {
-        const ArmorTruth& a = truth.armors[static_cast<std::size_t>(i)];
-
-        if (!cfg_.camera.enabled) {
-            best = 0;
-            best_facing = 0.0;
-            best_range = 0.0;
-            break;
+    if (armor_index >= 0) {
+        // 锁定模式：只检查距离/FOV，不要求板面朝向相机
+        if (armor_index >= count) {
+            obs.reason = InvalidReason::NoVisibleArmor;
+            return obs;
         }
-
+        best = armor_index;
+        const ArmorTruth& a = truth.armors[static_cast<std::size_t>(best)];
         const Vec3 d = cfg_.camera.position - a.p;
-        const double range = d.norm();
-        if (range > cfg_.max_range) continue;
-        any_in_range = true;
+        best_range = d.norm();
+        if (cfg_.camera.enabled) {
+            if (best_range > cfg_.max_range) {
+                obs.reason = InvalidReason::OutOfRange;
+                return obs;
+            }
+            any_in_range = true;
+            if (!inFov(a.p)) {
+                obs.reason = InvalidReason::OutOfFov;
+                return obs;
+            }
+            any_in_fov = true;
+            best_facing = a.n.dot(d / best_range);
+        }
+    } else {
+        for (int i = 0; i < count; ++i) {
+            const ArmorTruth& a = truth.armors[static_cast<std::size_t>(i)];
 
-        if (!inFov(a.p)) continue;
-        any_in_fov = true;
+            if (!cfg_.camera.enabled) {
+                best = 0;
+                best_facing = 0.0;
+                best_range = 0.0;
+                break;
+            }
 
-        // 板法向要朝向相机：n·(cam - p) > 0
-        const double facing = a.n.dot(d / range);
-        if (facing < cfg_.facing_min_cos) continue;
+            const Vec3 d = cfg_.camera.position - a.p;
+            const double range = d.norm();
+            if (range > cfg_.max_range) continue;
+            any_in_range = true;
 
-        if (facing > best_facing) {
-            best_facing = facing;
-            best = i;
-            best_range = range;
+            if (!inFov(a.p)) continue;
+            any_in_fov = true;
+
+            const double facing = a.n.dot(d / range);
+            if (facing < cfg_.facing_min_cos) continue;
+
+            if (facing > best_facing) {
+                best_facing = facing;
+                best = i;
+                best_range = range;
+            }
         }
     }
 
@@ -131,13 +185,11 @@ Observation GaussianSensor::observeAt(const RobotTruth& truth, double t, std::ui
 
     const ArmorTruth& a = truth.armors[static_cast<std::size_t>(best)];
 
-    // 位置噪声
     Rng pos_rng(mixKey(cfg_.seed, frame_index, kChPos));
     const Vec3 noise(pos_rng.gauss() * cfg_.position_sigma.x(),
                      pos_rng.gauss() * cfg_.position_sigma.y(),
                      pos_rng.gauss() * cfg_.position_sigma.z());
 
-    // 法向噪声：小角度旋转矢量 δ 作用在 n 上（保证仍是单位向量）
     Rng n_rng(mixKey(cfg_.seed, frame_index, kChNormal));
     const Vec3 delta(n_rng.gauss() * cfg_.normal_sigma,
                      n_rng.gauss() * cfg_.normal_sigma,

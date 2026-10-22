@@ -35,6 +35,125 @@ python3 tools/plot_kf.py        # 生成 build/kf/kf_demo.png + kf_demo.html（C
 - 滤波器：`kf::CvKalman`，只吃观测位置
 - 参数：`--sigma-accel`（过程噪声）、`--sigma-pos`（覆盖观测噪声）、`--duration`、`--warmup`
 
+## CA、CJ、CV9 与 IMM
+
+### 模型
+
+| 模型 | 文件 | 状态 | 说明 |
+|---|---|---|---|
+| CV | [cv.hpp](include/kf/models/cv.hpp) | `[p, v]` | 匀速 |
+| CV9 | [cv9.hpp](include/kf/models/cv9.hpp) | `[p, v, a]` | CV + 恒为 0 的虚拟加速度；`setState` 强制 a 清零 |
+| CA | [ca.hpp](include/kf/models/ca.hpp) | `[p, v, a]` | 匀加速，白噪声 jerk |
+| CJ | [cj.hpp](include/kf/models/cj.hpp) | `[p, v, a, j]` | 匀加加速度，白噪声 snap |
+| IMM | [imm.hpp](include/kf/imm.hpp) | — | 支持不同状态维度（嵌入公共空间） |
+
+CA / CJ 的 Q（单轴，乘 σ²）：
+
+```text
+CA:  [dt⁵/20  dt⁴/8  dt³/6]          CJ:  [dt⁷/252  dt⁶/72  dt⁵/30  dt⁴/24]
+     [dt⁴/8   dt³/3  dt²/2]               [dt⁶/72   dt⁵/20  dt⁴/8   dt³/6 ]
+     [dt³/6   dt²/2  dt   ]               [dt⁵/30   dt⁴/8   dt³/3   dt²/2 ]
+                                          [dt⁴/24   dt³/6   dt²/2   dt    ]
+```
+
+### 过程噪声：物理先验，不按数据调
+
+- 观测噪声用真实值：`R = σz² = 0.02²`（对比配置里的 `measurement_sigma: 0.02`）；
+- 小陀螺 ω = 6 rad/s、装甲半径 r = 0.22 m：
+  - 向心加速度 `ω²r ≈ 7.9 m/s²`，加上线性加速度上限 2 → **CV 快模型 σa = 10**；
+  - `jerk ≈ ω³r ≈ 48` → **CA 的 σj = 50**；
+  - `snap ≈ ω⁴r ≈ 285` → **CJ 的 σsnap = 300**；
+- IMM 转移矩阵对角 0.95。
+
+这些值在六个工况里**保持不变**，不是逐场景调出来的。
+
+### 六个工况
+
+| 配置 | 场景 |
+|---|---|
+| [shuttle](configs/kf/shuttle.yaml) | 折返跑，不转 |
+| [shuttle_spin](configs/kf/shuttle_spin.yaml) | 折返跑 + 小陀螺 |
+| [ellipse_spin](configs/kf/ellipse_spin.yaml) | 椭圆 + 小陀螺，匀速 |
+| [ellipse_var_spin](configs/kf/ellipse_var_spin.yaml) | 椭圆 + 小陀螺，**变速**（±40%，每圈 2 次） |
+| [cruise_spin](configs/kf/cruise_spin.yaml) | 匀速直线 + 小陀螺 |
+| [cruise_var_spin](configs/kf/cruise_var_spin.yaml) | 直线 + 小陀螺，**变速**（1 → 2.5 → 0.25 → 2.25 → 0） |
+
+椭圆用反馈控制器 `EllipseController`：按 θ 的曲率给 ω，变速时用实际速度算 ω、用 accel 跟踪期望速度，
+轨迹偏离 `x²/a² + y²/b² = 1` 在 4% 以内（有契约测试）。
+
+```bash
+python3 tools/compare.py configs/kf/ellipse_var_spin.yaml   # 单工况
+python3 tools/compare_all.py                                # 六个工况汇总
+```
+
+### 结果（RMSE，cm，物理先验固定）
+
+| 模型 | shuttle | shuttle_spin | ellipse_spin | ellipse_var_spin | cruise_spin | cruise_var_spin |
+|---|---|---|---|---|---|---|
+| CA 50 | 3.05 | 3.06 | 2.99 | 3.04 | 3.24 | 3.05 |
+| CJ 300 | 3.05 | 3.07 | 2.99 | 3.02 | 3.23 | 3.03 |
+| IMM CV+CV | **2.38** | 3.04 | **2.86** | 2.94 | 3.11 | **2.79** |
+| IMM CV9+CA | 2.39 | 3.11 | 2.99 | 3.08 | 3.33 | 2.97 |
+| IMM CA+CA | 2.67 | **3.00** | 2.93 | **2.98** | **3.16** | 2.91 |
+
+结论：
+
+- 固定物理先验后，**CV+CV 整体最好**：不转时 2.38，自转/变速时 2.79–3.11；
+- CA / CJ 很稳（2.99–3.24），但单模型没有 IMM 的组合优势；
+- CJ 和 CA 几乎打平——在这个噪声水平下，多一阶 jerk 状态带来的收益被噪声吃掉了；
+- 变速与否对排名影响不大，误差都在观测噪声底（2 cm）附近。
+
+### 统一参数调参（kf_tune）
+
+```bash
+python3 tools/tune.py                  # 默认 configs/kf/tune.yaml
+```
+
+- 六套工况的观测各采集一次（[kf_tune.cpp](apps/kf_tune.cpp)）；
+- 每个模型在网格上搜一组**全工况共用**的参数，目标默认“平均 RMSE 最小”（配置里可改 `objective: max`）；
+- 输出 [tune_result.json](build/kf/tune_result.json) + 图，并给出“逐工况各自最优”的对照（图里的小黑横线）。
+
+统一参数下的结果：
+
+| 模型 | 最优共用参数 | mean | worst |
+|---|---|---|---|
+| CV | σa = 10 | 2.90 | 3.08 |
+| CA | jerk = 20 | 2.94 | 3.10 |
+| CJ | σs = 200 | 3.03 | 3.17 |
+| IMM CV+CV | 0.01 / 10 | **2.85** | 3.11 |
+| IMM CV9+CA | 0.01 / 20 | 2.87 | 3.15 |
+| IMM CA+CA | 0.05 / 20 | 2.89 | 3.13 |
+
+- 统一参数下 **IMM CV+CV 仍最好**（2.85），单 CV 2.90；
+- 逐工况最优和统一参数的差距主要在 `shuttle`（CV 2.41 vs 2.76，IMM 2.32 vs 2.37），
+  说明“一套通用参数”的代价主要来自直线工况；
+- 慢模型的参数被推到网格下界（0.01 / 0.05）：直线段希望它尽量“硬”，机动交给快模型。
+
+### 噪声 1 cm 对照
+
+```bash
+python3 tools/tune.py configs/kf/tune_1cm.yaml
+python3 tools/plot_tune_compare.py build/kf/tune_result.json build/kf/tune_result_1cm.json --labels=2cm,1cm
+```
+
+`tune_1cm.yaml` 里 `sensor_sigma: 0.01`（同时覆盖仿真观测噪声）和 `measurement_sigma: 0.01`（滤波器 R）。
+
+| 模型 | 2 cm | 1 cm |
+|---|---|---|
+| CV | 2.90 | 1.53 |
+| CA | 2.94 | 1.53 |
+| CJ | 3.03 | 1.56 |
+| IMM CV+CV | **2.85** | **1.51** |
+| IMM CV9+CA | 2.87 | **1.50** |
+| IMM CA+CA | 2.89 | 1.51 |
+
+- RMSE 大约随噪声**线性减半**；
+- **最优参数几乎不变**（σ=10、jerk=20、snap=200、慢模型 0.01/0.05、快模型 10/20）；
+- 模型之间的差距从 0.18 cm 缩到 0.06 cm，基本进入噪声底；
+- `shuttle` 的 headroom 也缩小（CV 1.49 vs 逐场景最优 1.31，IMM 1.28 vs 1.25）。
+
+测试：`ctest` 有五项：`sim_contract`（含椭圆/变速椭圆轨迹）、`imm`、`ca`、`cj`。
+
 ## 两个 dt，别混
 
 | 名字 | 在哪 | 作用 |
@@ -211,7 +330,8 @@ src/
 ```
 
 依赖方向是单向的：`core` ← `motion/robot/sensing` ← `simulator` ← `config/apps`。
-卡尔曼部分在 `include/kf/`，同样按 `filter_interface`（接口）/ `kalman_filter`（核心）/ `models/cv`（模型）分层。
+卡尔曼部分在 `include/kf/`：`filter_interface.hpp`（接口）/ `kalman_filter.hpp`（通用线性核心）/
+`models/cv.hpp`（CV）/ `models/cv9.hpp`（CV+虚拟 a）/ `models/ca.hpp`（CA）/ `imm.hpp`（多模型）。
 
 ## 键盘控制（预留，未实现）
 

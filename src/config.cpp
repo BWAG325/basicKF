@@ -196,6 +196,20 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
             std::cerr << "[sim][warn] loop 只对 plan 模式生效，当前配置会忽略它\n";
         }
         setup.controller = std::make_unique<PlanController>(std::move(plan), loop);
+    } else if (root["ellipse"]) {
+        const YAML::Node e = root["ellipse"];
+        EllipseController::Config cfg;
+        cfg.a = getD(e, "a", cfg.a);
+        cfg.b = getD(e, "b", cfg.b);
+        cfg.speed = getD(e, "speed", cfg.speed);
+        cfg.speed_amp = getD(e, "speed_amp", cfg.speed_amp);
+        cfg.speed_waves = getD(e, "speed_waves", cfg.speed_waves);
+        cfg.spin_rate = getD(e, "spin_rate", cfg.spin_rate);
+        cfg.segment = getD(e, "segment", cfg.segment);
+        if (!(cfg.a > 0.0) || !(cfg.b > 0.0)) fail("ellipse.a / ellipse.b 必须 > 0");
+        if (!(cfg.speed > 0.0)) fail("ellipse.speed 必须 > 0");
+        if (!(cfg.segment > 0.0)) fail("ellipse.segment 必须 > 0");
+        setup.controller = std::make_unique<EllipseController>(cfg);
     } else if (root["random"]) {
         const YAML::Node rnd = root["random"];
         RandomController::Config cfg;

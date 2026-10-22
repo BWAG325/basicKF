@@ -56,6 +56,17 @@ public:
                                         std::uint64_t frame_index,
                                         ObservationTruth* anno = nullptr) const;
 
+    /// 强制观测指定装甲板（用于“锁定一块板”的滤波对比）：
+    /// 跳过朝向门限，但仍检查距离/FOV/丢帧。
+    [[nodiscard]] Observation observeArmorAt(const RobotTruth& truth,
+                                             double t,
+                                             std::uint64_t frame_index,
+                                             int armor_index,
+                                             ObservationTruth* anno = nullptr) const;
+
+    /// 当前帧最适合观测的装甲板下标（没有则 -1）。
+    [[nodiscard]] int pickArmor(const RobotTruth& truth) const;
+
     [[nodiscard]] bool inFov(const Vec3& p_world) const;
 
 private:

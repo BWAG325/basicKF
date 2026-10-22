@@ -1,0 +1,40 @@
+# 匀速 + 小陀螺：底盘 1.5 m/s 直线，装甲环 6 rad/s 自转
+sim:
+  min_dt: 0.001
+
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+
+initial:
+  position: [0.0, 0.0, 0.18]
+  velocity: [1.5, 0.0, 0.0]
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  spin_phase: 0.0
+
+plan:
+  - {duration: 60.0, spin_rate: 6.0}
+
+sensor:
+  schedule:
+    t0: 0.0
+    interval: 0.04
+    jitter: 0.01
+  seed: 11
+  position_sigma: [0.02, 0.02, 0.02]
+  normal_sigma: 0.01
+  dropout: 0.02
+  max_range: 40.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [6.0, -14.0, 4.0]
+    target: [6.0, 0.0, 0.2]
+    fov_half_deg: 65.0
+    output_in_camera_frame: false

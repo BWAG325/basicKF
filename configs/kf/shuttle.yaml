@@ -1,0 +1,35 @@
+# 对比配置：shuttle
+sim: configs/sim/rm_shuttle.yaml
+duration: 16.0
+warmup: 25
+measurement_sigma: 0.02   # 观测噪声真实值（sensor.position_sigma）
+
+output:
+  csv: build/kf/compare_shuttle.csv
+  png: build/kf/compare_shuttle.png
+
+models:
+  # 过程噪声按物理先验给定，不针对单段数据调参
+  - {name: "CA 50", type: ca, jerk: 50}
+  - {name: "CJ 300", type: cj, snap: 300}
+
+  - name: "IMM CV+CV"
+    type: imm
+    pi: [0.95, 0.95]
+    models:
+      - {type: cv, sigma: 0.5}
+      - {type: cv, sigma: 10}
+
+  - name: "IMM CV9+CA"
+    type: imm
+    pi: [0.95, 0.95]
+    models:
+      - {type: cv9, sigma: 0.5}
+      - {type: ca, jerk: 50}
+
+  - name: "IMM CA+CA"
+    type: imm
+    pi: [0.95, 0.95]
+    models:
+      - {type: ca, jerk: 5}
+      - {type: ca, jerk: 50}

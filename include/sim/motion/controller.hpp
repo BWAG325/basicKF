@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -108,6 +110,57 @@ private:
 
     Config cfg_;
     Rng rng_;
+};
+
+/// 沿椭圆匀速巡航：x = a·cosθ，y = b·sinθ。
+/// 曲率 κ(θ) = ab / (a²sin²θ + b²cos²θ)^{3/2}，取 ω = v·κ，θ 按弧长推进。
+/// 初始位姿要放在 (a, 0)、朝向 +y（切线方向）。
+class EllipseController final : public IController {
+public:
+    struct Config {
+        double a = 2.0;          ///< 半长轴 [m]
+        double b = 1.0;          ///< 半短轴 [m]
+        double speed = 1.5;      ///< 基准线速度 [m/s]
+        double speed_amp = 0.0;  ///< 速度起伏比例（0.4 = ±40%）
+        double speed_waves = 2.0;///< 每圈速度起伏的次数
+        double spin_rate = 0.0;  ///< 小陀螺 [rad/s]
+        double segment = 0.02;   ///< 每段控制时长 [s]
+    };
+
+    explicit EllipseController(Config cfg) : cfg_(cfg) { reset(); }
+
+    void reset() override { theta_ = 0.0; }
+
+    [[nodiscard]] Control next(const RobotState& state) override {
+        const double s = std::sin(theta_);
+        const double c = std::cos(theta_);
+        const double denom = cfg_.a * cfg_.a * s * s + cfg_.b * cfg_.b * c * c;
+        const double kappa = cfg_.a * cfg_.b / std::pow(denom, 1.5);
+
+        // 期望速度沿椭圆起伏；实际速度由 accel 跟踪，路径一致性用实际速度算 ω。
+        const double v_des = desiredSpeed(theta_);
+        const double v_act = std::max(0.05, state.speed);
+
+        Control ctrl;
+        ctrl.accel = std::clamp(5.0 * (v_des - v_act), -3.0, 3.0);
+        ctrl.angular_rate = Vec3(0.0, 0.0, v_act * kappa);
+        ctrl.spin_rate = cfg_.spin_rate;
+        ctrl.duration = cfg_.segment;
+
+        const double ds = v_act * cfg_.segment;
+        theta_ += ds / std::sqrt(denom);
+        if (theta_ >= 2.0 * kPi) theta_ -= 2.0 * kPi;
+        return ctrl;
+    }
+
+private:
+    [[nodiscard]] double desiredSpeed(double theta) const {
+        const double f = 1.0 + cfg_.speed_amp * std::sin(cfg_.speed_waves * theta);
+        return cfg_.speed * std::max(0.05, f);
+    }
+
+    Config cfg_;
+    double theta_ = 0.0;
 };
 
 }  // namespace sim
