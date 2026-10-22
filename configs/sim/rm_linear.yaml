@@ -1,0 +1,41 @@
+# 匀速直线：车体不转、不陀螺，同一块装甲板始终朝向相机
+# 专门给 CV 卡尔曼 demo 用（观测里跟踪的装甲板不会来回切换）
+
+sim:
+  min_dt: 0.001
+
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+
+initial:
+  position: [0.0, 0.0, 0.18]
+  velocity: [2.0, 0.0, 0.0]   # 一开始就 2 m/s，CV 模型正好匹配
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+
+plan:
+  - {duration: 60.0, accel: 0.0}   # 匀速：CV 的“标准答案”，先验证滤波本身
+
+sensor:
+  schedule:
+    t0: 0.0
+    interval: 0.04
+    jitter: 0.015
+  seed: 77
+  position_sigma: [0.02, 0.02, 0.02]
+  normal_sigma: 0.01
+  dropout: 0.02
+  max_range: 25.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [4.0, -10.0, 3.0]
+    target: [4.0, 0.0, 0.2]
+    fov_half_deg: 60.0
+    output_in_camera_frame: false

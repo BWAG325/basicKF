@@ -20,6 +20,10 @@ else()
     set(YAML_CPP_TARGET yaml-cpp)
 endif()
 
+add_library(kf_core INTERFACE)
+target_include_directories(kf_core INTERFACE include)
+target_link_libraries(kf_core INTERFACE Eigen3::Eigen)
+
 add_library(sim_core STATIC
     src/simulator.cpp
     src/sensor.cpp
@@ -35,6 +39,12 @@ target_link_libraries(sim_demo PRIVATE sim_core ${OpenCV_LIBS})
 target_include_directories(sim_demo PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_compile_definitions(sim_demo PRIVATE SIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_compile_options(sim_demo PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(kf_demo apps/kf_demo.cpp)
+target_link_libraries(kf_demo PRIVATE sim_core kf_core ${OpenCV_LIBS})
+target_include_directories(kf_demo PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_compile_definitions(kf_demo PRIVATE SIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_options(kf_demo PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(sim_contract_test tests/sim_contract_test.cpp)
 target_link_libraries(sim_contract_test PRIVATE sim_core)

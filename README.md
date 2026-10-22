@@ -21,6 +21,20 @@ python3 tools/plot_traces.py
 
 3D 页面是手写的投影 + 画家算法，无外部依赖，直接浏览器打开即可。
 
+## CV 卡尔曼 demo
+
+```bash
+./build/kf_demo                 # 6s 匀速场景，打印汇总
+./build/kf_demo --table         # 逐帧表
+./build/kf_demo --csv > build/kf/cv_demo.csv
+python3 tools/plot_kf.py        # 生成 build/kf/kf_demo.png + kf_demo.html（CSV 回放）
+# 实时版：build/kf/kf_live.html（浏览器里跑模拟器 + 观测 + CV 滤波，可重置/换预设）
+```
+
+- 场景：[configs/sim/rm_linear.yaml](configs/sim/rm_linear.yaml)（车体不转，同一块装甲板始终可见）
+- 滤波器：`kf::CvKalman`，只吃观测位置
+- 参数：`--sigma-accel`（过程噪声）、`--sigma-pos`（覆盖观测噪声）、`--duration`、`--warmup`
+
 ## 两个 dt，别混
 
 | 名字 | 在哪 | 作用 |
