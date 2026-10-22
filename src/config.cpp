@@ -1,5 +1,7 @@
 #include "sim/config.hpp"
 
+#include "sim/core/paths.hpp"
+
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
@@ -91,11 +93,13 @@ Vec3 getAngularRate(const YAML::Node& seg) {
 }  // namespace
 
 SimSetup loadSimSetup(const std::string& yaml_path) {
+    const std::string resolved = resolvePath(yaml_path);
+
     YAML::Node root;
     try {
-        root = YAML::LoadFile(yaml_path);
+        root = YAML::LoadFile(resolved);
     } catch (const std::exception& e) {
-        fail("读取 " + yaml_path + " 失败: " + e.what());
+        fail("读取 " + resolved + " 失败: " + e.what());
     }
     if (!root.IsMap()) fail("根节点必须是 map");
 

@@ -10,6 +10,9 @@ if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
 
+# 把工程根目录编进程序：相对路径统一相对工程根解析，CLion / 命令行行为一致
+add_compile_definitions(SIM_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(yaml-cpp REQUIRED)
 find_package(OpenCV REQUIRED)
@@ -37,18 +40,15 @@ target_compile_options(sim_core PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(sim_demo apps/sim_demo.cpp)
 target_link_libraries(sim_demo PRIVATE sim_core ${OpenCV_LIBS})
 target_include_directories(sim_demo PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_compile_definitions(sim_demo PRIVATE SIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_compile_options(sim_demo PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(kf_demo apps/kf_demo.cpp)
 target_link_libraries(kf_demo PRIVATE sim_core kf_core ${OpenCV_LIBS})
 target_include_directories(kf_demo PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_compile_definitions(kf_demo PRIVATE SIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_compile_options(kf_demo PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(sim_contract_test tests/sim_contract_test.cpp)
 target_link_libraries(sim_contract_test PRIVATE sim_core)
-target_compile_definitions(sim_contract_test PRIVATE SIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_compile_options(sim_contract_test PRIVATE -Wall -Wextra -Wpedantic)
 
 enable_testing()

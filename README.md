@@ -63,6 +63,19 @@ sim_demo --duration=5 --min-dt=0.001
 
 写错成 `-c path`（空格）会被解析成布尔 flag，程序会直接提示正确写法。
 
+**路径解析规则**（和 `auto_aim_/tools/yaml.hpp` 的 `project_path()` 一致）：
+
+- CMake 把工程根目录编进程序（`SIM_PROJECT_SOURCE_DIR`）；
+- 相对路径一律拼到工程根，而不是当前工作目录；
+- 绝对路径原样使用。
+
+所以 CLion（工作目录通常是 `cmake-build-*`）和命令行（工作目录是工程根）启动行为一致：
+
+```bash
+./build/sim_demo -c=configs/sim/rm_circle.yaml   # 在工程根
+cd build && ./sim_demo -c=configs/sim/rm_circle.yaml  # 一样能跑
+```
+
 ## 运行模型
 
 ```cpp
@@ -177,7 +190,8 @@ include/sim/
 ├── core/                数据契约与小工具（不依赖其他层）
 │   ├── types.hpp          Control / RobotState / RobotTruth / Observation
 │   ├── angle.hpp          角度归一化
-│   └── random.hpp         无状态随机数
+│   ├── random.hpp         无状态随机数
+│   └── paths.hpp          相对路径 → 工程根（CLion / 命令行一致）
 ├── motion/              运动与推进（只依赖 core）
 │   ├── integrator.hpp     四元数姿态 + Simpson 位置积分
 │   ├── controller.hpp     IController / PlanController / RandomController

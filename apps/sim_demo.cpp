@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "sim/config.hpp"
+#include "sim/core/paths.hpp"
 #include "sim/sensing/sensor.hpp"
 #include "sim/simulator.hpp"
 
@@ -69,21 +70,6 @@ double minInterval(const sim::SensorConfig& cfg) {
 }
 
 /// CLion 的工作目录可能是工程根目录，也可能是 build 目录：两种都试，最后退到源码目录。
-std::string resolveConfigPath(const std::string& in) {
-    namespace fs = std::filesystem;
-    const std::vector<std::string> candidates = {
-        in,
-        "../" + in,
-        "../../" + in,
-#ifdef SIM_SOURCE_DIR
-        std::string(SIM_SOURCE_DIR) + "/" + in,
-#endif
-    };
-    for (const auto& c : candidates) {
-        if (fs::exists(c)) return c;
-    }
-    return in;
-}
 
 }  // namespace
 
@@ -97,7 +83,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    const std::string config_path = resolveConfigPath(cli.get<std::string>("config-path"));
+    const std::string config_path = sim::resolvePath(cli.get<std::string>("config-path"));
     const double t_print = cli.get<double>("t");
     const double duration = cli.get<double>("duration");
     const double min_dt_arg = cli.get<double>("min-dt");

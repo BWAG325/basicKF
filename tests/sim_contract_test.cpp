@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "sim/config.hpp"
+#include "sim/core/paths.hpp"
 #include "sim/motion/controller.hpp"
 #include "sim/motion/integrator.hpp"
 #include "sim/motion/preset.hpp"
@@ -543,7 +544,7 @@ void testPresetNames() {
 }
 
 void testConfigFiles() {
-    const std::string dir = std::string(SIM_SOURCE_DIR) + "/configs/sim/";
+    const std::string dir = sim::resolvePath("configs/sim/");
     for (const std::string name : {"rm_straight_spin.yaml", "rm_random.yaml", "rm_circle.yaml", "rm_weave.yaml", "rm_loop.yaml"}) {
         auto setup = sim::loadSimSetup(dir + name);
         sim::Simulator sim(setup.geometry, setup.initial, std::move(setup.controller), setup.min_dt);

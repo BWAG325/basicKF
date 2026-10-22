@@ -33,6 +33,7 @@ public:
     using MeasVec = Eigen::Matrix<double, NZ, 1>;
     using MeasMat = Eigen::Matrix<double, NZ, NZ>;
     using MeasStateMat = Eigen::Matrix<double, NZ, NX>;
+    using GainMat = Eigen::Matrix<double, NX, NZ>;
 
     struct Model {
         std::function<StateMat(double dt)> F;
@@ -125,7 +126,9 @@ private:
         const MeasVec residual = z - H * x_;
         const MeasMat S = H * P_ * H.transpose() + model_.R(z);
 
-        const auto K = P_ * H.transpose() * S.ldlt().solve(MeasMat::Identity());
+        // 显式类型，强制立即求值：solve() 返回惰性表达式，若用 auto 会持有
+        // 临时 LDLT 的引用，语句结束即悬垂（Debug 下 matrixL() 断言失败）。
+        const GainMat K = P_ * H.transpose() * S.ldlt().solve(MeasMat::Identity());
 
         x_ += K * residual;
 
@@ -144,7 +147,9 @@ private:
         const MeasVec residual = z - H * x_;
         const MeasMat S = H * P_ * H.transpose() + R;
 
-        const auto K = P_ * H.transpose() * S.ldlt().solve(MeasMat::Identity());
+        // 显式类型，强制立即求值：solve() 返回惰性表达式，若用 auto 会持有
+        // 临时 LDLT 的引用，语句结束即悬垂（Debug 下 matrixL() 断言失败）。
+        const GainMat K = P_ * H.transpose() * S.ldlt().solve(MeasMat::Identity());
 
         x_ += K * residual;
 

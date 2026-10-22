@@ -11,6 +11,7 @@
 
 #include "kf/models/cv.hpp"
 #include "sim/config.hpp"
+#include "sim/core/paths.hpp"
 #include "sim/sensing/sensor.hpp"
 #include "sim/simulator.hpp"
 
@@ -32,21 +33,6 @@ double minInterval(const sim::SensorConfig& cfg) {
     return std::max(1e-3, cfg.interval - cfg.jitter);
 }
 
-std::string resolveConfigPath(const std::string& in) {
-    namespace fs = std::filesystem;
-    const std::vector<std::string> candidates = {
-        in,
-        "../" + in,
-        "../../" + in,
-#ifdef SIM_SOURCE_DIR
-        std::string(SIM_SOURCE_DIR) + "/" + in,
-#endif
-    };
-    for (const auto& c : candidates) {
-        if (fs::exists(c)) return c;
-    }
-    return in;
-}
 
 }  // namespace
 
@@ -57,7 +43,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    const std::string config_path = resolveConfigPath(cli.get<std::string>("config-path"));
+    const std::string config_path = sim::resolvePath(cli.get<std::string>("config-path"));
     if (!std::filesystem::exists(config_path)) {
         std::cerr << "error: 找不到配置文件: " << config_path << "\n";
         return 1;
