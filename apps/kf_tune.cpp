@@ -21,6 +21,8 @@
 #include "kf/models/cj.hpp"
 #include "kf/models/cv.hpp"
 #include "kf/models/cv9.hpp"
+#include "kf/models/ct.hpp"
+#include "kf/models/spin.hpp"
 #include "sim/config.hpp"
 #include "sim/core/paths.hpp"
 #include "sim/sensing/sensor.hpp"
@@ -45,13 +47,18 @@ struct Scenario {
     Eigen::Matrix3d R = Eigen::Matrix3d::Identity() * 0.0004;
 };
 
-enum class Kind { CV, CA, CJ, IMM_CC, IMM_CV9CA, IMM_CACA };
+enum class Kind { CV, CA, CJ, CTRV, CTRA, CTRJ, SPIN, SPINA, IMM_CC, IMM_CV9CA, IMM_CACA };
 
 const char* kindName(Kind k) {
     switch (k) {
         case Kind::CV: return "CV";
         case Kind::CA: return "CA";
         case Kind::CJ: return "CJ";
+        case Kind::CTRV: return "CTRV";
+        case Kind::CTRA: return "CTRA";
+        case Kind::CTRJ: return "CTRJ";
+        case Kind::SPIN: return "SPIN";
+        case Kind::SPINA: return "SPIN+A";
         case Kind::IMM_CC: return "IMM CV+CV";
         case Kind::IMM_CV9CA: return "IMM CV9+CA";
         case Kind::IMM_CACA: return "IMM CA+CA";
@@ -68,6 +75,15 @@ struct Params {
     double cv9 = 0.5;
     double ca_slow = 5.0;
     double ca_fast = 50.0;
+    double ct_v = 2.0;
+    double ct_a = 5.0;
+    double ct_j = 50.0;
+    double ct_w = 2.0;
+    double ct_alpha = 5.0;
+    double ct_z = 0.01;
+    double spin_v = 2.0;
+    double spin_w = 2.0;
+    double spin_alpha = 5.0;
 };
 
 struct Runner {
@@ -78,7 +94,8 @@ struct Runner {
     void predict(double dt) { is_imm ? imm->predict(dt) : single->predict(dt); }
     void update(const Eigen::Vector3d& z) { is_imm ? imm->update(z) : single->update(z); }
     Eigen::Vector3d position() const {
-        return (is_imm ? imm->state() : single->state()).head<3>();
+        if (is_imm) return imm->state().head<3>();
+        return single->position();
     }
 };
 
@@ -135,6 +152,43 @@ Runner makeRunner(Kind kind, const Params& p, const Scenario& sc) {
     }
     if (kind == Kind::CJ) {
         r.single = leafCj(p.cj, z, v, R);
+        return r;
+    }
+
+    if (kind == Kind::SPIN || kind == Kind::SPINA) {
+        kf::SpinParams sp;
+        sp.armor_radius = 0.22;
+        sp.has_alpha = (kind == Kind::SPINA);
+        sp.sigma_v = p.spin_v;
+        sp.sigma_w = p.spin_w;
+        sp.sigma_alpha = p.spin_alpha;
+        sp.sigma_z = 0.01;
+        sp.R = R;
+
+        auto f = std::make_unique<kf::SpinKalman>(sp);
+        f->init(z, v);
+        f->setMeasurementNoise(R);
+        r.single = std::move(f);
+        return r;
+    }
+
+    if (kind == Kind::CTRV || kind == Kind::CTRA || kind == Kind::CTRJ) {
+        kf::CtParams cp;
+        cp.has_a = (kind != Kind::CTRV);
+        cp.has_j = (kind == Kind::CTRJ);
+        cp.has_alpha = (kind != Kind::CTRV);
+        cp.sigma_v = p.ct_v;
+        cp.sigma_a = p.ct_a;
+        cp.sigma_j = p.ct_j;
+        cp.sigma_w = p.ct_w;
+        cp.sigma_alpha = p.ct_alpha;
+        cp.sigma_z = p.ct_z;
+        cp.R = R;
+
+        auto f = std::make_unique<kf::CtKalman>(cp);
+        f->init(z, v);
+        f->setMeasurementNoise(R);
+        r.single = std::move(f);
         return r;
     }
 
@@ -356,6 +410,106 @@ int main(int argc, char* argv[]) {
                 if (sc.objective < best.objective) best = sc;
             }
             record(Kind::CJ, best, "snap=" + fmt(best.params.cj), per_scene_best(all));
+        }
+
+        const auto ct_v_grid = vec(g ? g["ct_v"] : YAML::Node(), {0.5, 1, 2, 5});
+        const auto ct_w_grid = vec(g ? g["ct_w"] : YAML::Node(), {0.5, 1, 2, 5});
+        const auto ct_a_grid = vec(g ? g["ct_a"] : YAML::Node(), {2, 5, 10});
+        const auto ct_alpha_grid = vec(g ? g["ct_alpha"] : YAML::Node(), {2, 5, 10});
+        const auto ct_j_grid = vec(g ? g["ct_j"] : YAML::Node(), {20, 50, 100});
+
+        const auto spin_v_grid = vec(g ? g["spin_v"] : YAML::Node(), {0.5, 1, 2, 5});
+        const auto spin_w_grid = vec(g ? g["spin_w"] : YAML::Node(), {0.5, 1, 2, 5});
+        const auto spin_alpha_grid = vec(g ? g["spin_alpha"] : YAML::Node(), {2, 5, 10});
+
+        // ---- SPIN ----
+        {
+            std::vector<Score> all;
+            Score best;
+            for (double sv : spin_v_grid)
+                for (double sw : spin_w_grid) {
+                    Params p;
+                    p.spin_v = sv;
+                    p.spin_w = sw;
+                    Score sc = evaluate(Kind::SPIN, p, scenarios, warmup, use_max);
+                    all.push_back(sc);
+                    if (sc.objective < best.objective) best = sc;
+                }
+            record(Kind::SPIN, best,
+                   "spin_v=" + fmt(best.params.spin_v) + ", spin_w=" + fmt(best.params.spin_w),
+                   per_scene_best(all));
+        }
+
+        // ---- SPIN+A ----
+        {
+            std::vector<Score> all;
+            Score best;
+            for (double sw : spin_w_grid)
+                for (double salpha : spin_alpha_grid) {
+                    Params p;
+                    p.spin_w = sw;
+                    p.spin_alpha = salpha;
+                    Score sc = evaluate(Kind::SPINA, p, scenarios, warmup, use_max);
+                    all.push_back(sc);
+                    if (sc.objective < best.objective) best = sc;
+                }
+            record(Kind::SPINA, best,
+                   "spin_w=" + fmt(best.params.spin_w) + ", spin_alpha=" + fmt(best.params.spin_alpha),
+                   per_scene_best(all));
+        }
+
+        // ---- CTRV ----
+        {
+            std::vector<Score> all;
+            Score best;
+            for (double sv : ct_v_grid)
+                for (double sw : ct_w_grid) {
+                    Params p;
+                    p.ct_v = sv;
+                    p.ct_w = sw;
+                    Score sc = evaluate(Kind::CTRV, p, scenarios, warmup, use_max);
+                    all.push_back(sc);
+                    if (sc.objective < best.objective) best = sc;
+                }
+            record(Kind::CTRV, best,
+                   "sigma_v=" + fmt(best.params.ct_v) + ", sigma_w=" + fmt(best.params.ct_w),
+                   per_scene_best(all));
+        }
+
+        // ---- CTRA ----
+        {
+            std::vector<Score> all;
+            Score best;
+            for (double sa : ct_a_grid)
+                for (double salpha : ct_alpha_grid) {
+                    Params p;
+                    p.ct_a = sa;
+                    p.ct_alpha = salpha;
+                    Score sc = evaluate(Kind::CTRA, p, scenarios, warmup, use_max);
+                    all.push_back(sc);
+                    if (sc.objective < best.objective) best = sc;
+                }
+            record(Kind::CTRA, best,
+                   "sigma_a=" + fmt(best.params.ct_a) + ", sigma_alpha=" + fmt(best.params.ct_alpha),
+                   per_scene_best(all));
+        }
+
+        // ---- CTRJ ----
+        {
+            std::vector<Score> all;
+            Score best;
+            for (double sj : ct_j_grid)
+                for (double salpha : ct_alpha_grid) {
+                    Params p;
+                    p.ct_j = sj;
+                    p.ct_alpha = salpha;
+                    Score sc = evaluate(Kind::CTRJ, p, scenarios, warmup, use_max);
+                    all.push_back(sc);
+                    if (sc.objective < best.objective) best = sc;
+                }
+            record(Kind::CTRJ, best,
+                   "sigma_j=" + fmt(best.params.ct_j) + ", sigma_alpha=" + fmt(best.params.ct_alpha),
+                   per_scene_best(all));
         }
 
         // ---- IMM CV+CV ----

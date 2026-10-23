@@ -111,7 +111,14 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
     if (robot) {
         geom.armor_count = getI(robot, "armors", geom.armor_count);
         geom.armor_radius = getD(robot, "armor_radius", geom.armor_radius);
+        geom.armor_a = getD(robot, "armor_a", geom.armor_a);
+        geom.armor_b = getD(robot, "armor_b", geom.armor_b);
         geom.armor_dz = getD(robot, "armor_dz", geom.armor_dz);
+
+        if (const YAML::Node off = robot["armor_offset"]) {
+            if (!off.IsSequence() || off.size() != 2) fail("robot.armor_offset 必须是 [x, y]");
+            geom.armor_offset = Vec2(off[0].as<double>(), off[1].as<double>());
+        }
         geom.armor_width = getD(robot, "armor_width", geom.armor_width);
         geom.armor_height = getD(robot, "armor_height", geom.armor_height);
         geom.body_radius = getD(robot, "body_radius", geom.body_radius);

@@ -601,6 +601,21 @@ void testEllipseController() {
     check(vmax / std::max(1e-6, vmin) > 1.3, "ellipse(var): 速度应有明显起伏");
 }
 
+void testArmorRingShape() {
+    const std::string dir = sim::resolvePath("configs/sim/");
+    auto setup = sim::loadSimSetup(dir + "rm_ellipse_ring_spin.yaml");
+    sim::Simulator sim(setup.geometry, setup.initial, std::move(setup.controller), setup.min_dt);
+    const sim::RobotTruth tr = sim.truth();
+
+    double dmin = 1e9, dmax = 0.0;
+    for (int i = 0; i < tr.armor_count; ++i) {
+        const double d = (tr.armors[static_cast<std::size_t>(i)].p - tr.chassis.p).norm();
+        dmin = std::min(dmin, d);
+        dmax = std::max(dmax, d);
+    }
+    check(dmax > 0.40 && dmin < 0.12, "椭圆装甲环：到车体中心的距离应随角度变化");
+}
+
 }  // namespace
 
 int main() {
@@ -628,6 +643,7 @@ int main() {
     testPresetNames();
     testConfigFiles();
     testEllipseController();
+    testArmorRingShape();
 
     if (g_fail == 0) {
         std::cout << "all sim contract tests passed\n";

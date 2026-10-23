@@ -1,0 +1,14 @@
+# 提前量预测误差：每个观测帧向前推 H 秒，与 t+H 的真值比较
+scenarios:
+  - {name: cruise_spin,      path: configs/sim/rm_cruise_spin.yaml,      duration: 8}
+  - {name: shuttle_spin,     path: configs/sim/rm_shuttle_spin.yaml,     duration: 16}
+  - {name: ellipse_spin,     path: configs/sim/rm_ellipse_spin.yaml,     duration: 16}
+  - {name: ellipse_ring_spin,path: configs/sim/rm_ellipse_ring_spin.yaml,duration: 8}
+
+warmup: 25
+measurement_sigma: 0.02
+horizons: [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16]
+models: [cv, ca, ctrv, spin]
+
+output:
+  csv: build/kf/future.csv

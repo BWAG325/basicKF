@@ -13,6 +13,7 @@
 
 namespace sim {
 
+using Vec2 = Eigen::Vector2d;
 using Vec3 = Eigen::Vector3d;
 using Mat3 = Eigen::Matrix3d;
 using Quat = Eigen::Quaterniond;
@@ -68,7 +69,10 @@ struct RobotState {
 
 struct RobotGeometry {
     int armor_count = 4;
-    double armor_radius = 0.22;  ///< 板中心到车体 z 轴的水平距离 [m]
+    double armor_radius = 0.22;  ///< 圆环半径（a/b 未指定时使用）[m]
+    double armor_a = 0.0;        ///< 椭圆半长轴；<=0 表示用 armor_radius
+    double armor_b = 0.0;        ///< 椭圆半短轴；<=0 表示用 armor_radius
+    Vec2 armor_offset = Vec2::Zero();  ///< 环心相对车体中心的水平偏移 [m]
     double armor_dz = 0.0;       ///< 板中心相对车体中心的车体 z 偏移 [m]
     double armor_width = 0.13;
     double armor_height = 0.12;

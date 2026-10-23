@@ -20,6 +20,15 @@ grids:
   cv9:      [0.01, 0.02, 0.03, 0.05, 0.1, 0.2, 0.5]
   ca_slow:  [0.05, 0.1, 0.2, 0.5, 1, 2, 5]
   ca_fast:  [10, 20, 50, 100]
+  # CT / SPIN（EKF）
+  ct_v:     [0.5, 1, 2, 5]
+  ct_w:     [0.5, 1, 2, 5]
+  ct_a:     [2, 5, 10]
+  ct_alpha: [2, 5, 10]
+  ct_j:     [20, 50, 100]
+  spin_v:   [0.5, 1, 2, 5]
+  spin_w:   [0.5, 1, 2, 5]
+  spin_alpha: [2, 5, 10]
 
 output:
   json: build/kf/tune_result.json

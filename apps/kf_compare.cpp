@@ -19,6 +19,9 @@
 #include "kf/models/cj.hpp"
 #include "kf/models/cv.hpp"
 #include "kf/models/cv9.hpp"
+#include "kf/models/ct.hpp"
+#include "kf/models/spin.hpp"
+#include "kf/models/spin_gen.hpp"
 #include "sim/config.hpp"
 #include "sim/core/paths.hpp"
 #include "sim/sensing/sensor.hpp"
@@ -39,6 +42,16 @@ struct Spec {
     double sigma = 0.6;
     double jerk = 50.0;
     double snap = 200.0;
+    double sigma_v = 2.0;
+    double sigma_a = 5.0;
+    double sigma_j = 50.0;
+    double sigma_w = 2.0;
+    double sigma_alpha = 5.0;
+    double sigma_z = 0.01;
+    double spin_radius = 0.22;
+    double spin_v = 2.0;
+    double spin_w = 2.0;
+    double spin_alpha = 5.0;
     std::vector<double> pi;
     std::vector<Spec> subs;
 };
@@ -51,6 +64,16 @@ Spec parseSpec(const YAML::Node& n) {
     if (n["sigma"]) s.sigma = n["sigma"].as<double>();
     if (n["jerk"]) s.jerk = n["jerk"].as<double>();
     if (n["snap"]) s.snap = n["snap"].as<double>();
+    if (n["sigma_v"]) s.sigma_v = n["sigma_v"].as<double>();
+    if (n["sigma_a"]) s.sigma_a = n["sigma_a"].as<double>();
+    if (n["sigma_j"]) s.sigma_j = n["sigma_j"].as<double>();
+    if (n["sigma_w"]) s.sigma_w = n["sigma_w"].as<double>();
+    if (n["sigma_alpha"]) s.sigma_alpha = n["sigma_alpha"].as<double>();
+    if (n["sigma_z"]) s.sigma_z = n["sigma_z"].as<double>();
+    if (n["spin_radius"]) s.spin_radius = n["spin_radius"].as<double>();
+    if (n["spin_v"]) s.spin_v = n["spin_v"].as<double>();
+    if (n["spin_w"]) s.spin_w = n["spin_w"].as<double>();
+    if (n["spin_alpha"]) s.spin_alpha = n["spin_alpha"].as<double>();
     if (n["pi"]) {
         for (const auto& v : n["pi"]) s.pi.push_back(v.as<double>());
     }
@@ -106,6 +129,51 @@ std::unique_ptr<kf::IFilter> makeLeaf(const Spec& s, const Eigen::Vector3d& z,
         f->setMeasurementNoise(R);
         return f;
     }
+    if (s.type == "spin_g") {
+        kf::SpinGenParams p;
+        p.init_radius = s.spin_radius;
+        p.sigma_v = s.spin_v;
+        p.sigma_w = s.spin_w;
+        p.R = R;
+
+        auto f = std::make_unique<kf::SpinGenKalman>(p);
+        f->init(z, v);
+        f->setMeasurementNoise(R);
+        return f;
+    }
+    if (s.type == "spin" || s.type == "spin_a") {
+        kf::SpinParams p;
+        p.armor_radius = s.spin_radius;
+        p.has_alpha = (s.type == "spin_a");
+        p.sigma_v = s.spin_v;
+        p.sigma_w = s.spin_w;
+        p.sigma_alpha = s.spin_alpha;
+        p.sigma_z = s.sigma_z;
+        p.R = R;
+
+        auto f = std::make_unique<kf::SpinKalman>(p);
+        f->init(z, v);
+        f->setMeasurementNoise(R);
+        return f;
+    }
+    if (s.type == "ctrv" || s.type == "ctra" || s.type == "ctrj") {
+        kf::CtParams p;
+        p.has_a = (s.type != "ctrv");
+        p.has_j = (s.type == "ctrj");
+        p.has_alpha = (s.type != "ctrv");
+        p.sigma_v = s.sigma_v;
+        p.sigma_a = s.sigma_a;
+        p.sigma_j = s.sigma_j;
+        p.sigma_w = s.sigma_w;
+        p.sigma_alpha = s.sigma_alpha;
+        p.sigma_z = s.sigma_z;
+        p.R = R;
+
+        auto f = std::make_unique<kf::CtKalman>(p);
+        f->init(z, v);
+        f->setMeasurementNoise(R);
+        return f;
+    }
     throw std::runtime_error("未知模型类型: " + s.type);
 }
 
@@ -141,7 +209,8 @@ Runner makeRunner(const Spec& s, const Eigen::Vector3d& z, const Eigen::Vector3d
 }
 
 Eigen::Vector3d runnerPosition(const Runner& r) {
-    return (r.is_imm ? r.imm->state() : r.single->state()).head<3>();
+    if (r.is_imm) return r.imm->state().head<3>();
+    return r.single->position();
 }
 
 std::string jsonEscape(const std::string& s) {

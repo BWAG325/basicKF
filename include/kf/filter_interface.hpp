@@ -19,6 +19,9 @@ public:
     virtual void update(const Eigen::VectorXd& z) = 0;
 
     [[nodiscard]] virtual Eigen::VectorXd state() const = 0;
+
+    /// 位置观测对应的三维位置（默认取状态前三维；CT 这类非线性模型会覆盖）。
+    [[nodiscard]] virtual Eigen::Vector3d position() const { return state().head<3>(); }
     [[nodiscard]] virtual Eigen::MatrixXd covariance() const = 0;
 
     [[nodiscard]] virtual Eigen::VectorXd innovation() const = 0;

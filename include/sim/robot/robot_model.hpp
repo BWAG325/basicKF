@@ -24,6 +24,8 @@ inline std::array<ArmorTruth, kMaxArmors> makeArmors(const RobotGeometry& g,
     std::array<ArmorTruth, kMaxArmors> out{};
     const int n = std::clamp(g.armor_count, 1, kMaxArmors);
     const double step = kTwoPi / static_cast<double>(n);
+    const double ax = g.armor_a > 0.0 ? g.armor_a : g.armor_radius;
+    const double bx = g.armor_b > 0.0 ? g.armor_b : g.armor_radius;
 
     for (int i = 0; i < n; ++i) {
         const double ang = ring + static_cast<double>(i) * step;
@@ -31,8 +33,8 @@ inline std::array<ArmorTruth, kMaxArmors> makeArmors(const RobotGeometry& g,
 
         ArmorTruth a;
         a.index = i;
-        a.p = center + body * Vec3(g.armor_radius * std::cos(ang),
-                                   g.armor_radius * std::sin(ang),
+        a.p = center + body * Vec3(g.armor_offset.x() + ax * std::cos(ang),
+                                   g.armor_offset.y() + bx * std::sin(ang),
                                    g.armor_dz);
         a.q = qa;
         a.n = qa * Vec3(1.0, 0.0, 0.0);

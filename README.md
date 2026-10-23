@@ -45,7 +45,15 @@ python3 tools/plot_kf.py        # 生成 build/kf/kf_demo.png + kf_demo.html（C
 | CV9 | [cv9.hpp](include/kf/models/cv9.hpp) | `[p, v, a]` | CV + 恒为 0 的虚拟加速度；`setState` 强制 a 清零 |
 | CA | [ca.hpp](include/kf/models/ca.hpp) | `[p, v, a]` | 匀加速，白噪声 jerk |
 | CJ | [cj.hpp](include/kf/models/cj.hpp) | `[p, v, a, j]` | 匀加加速度，白噪声 snap |
+| CTRV | [ct.hpp](include/kf/models/ct.hpp) | `[x,y,ψ,v,ω,z]` | 协调转弯：CV + 角速度 |
+| CTRA | [ct.hpp](include/kf/models/ct.hpp) | +`a,α` | 协调转弯 + 线加速度/角加速度 |
+| CTRJ | [ct.hpp](include/kf/models/ct.hpp) | +`j,α` | 再加 jerk |
+| SPIN | [spin.hpp](include/kf/models/spin.hpp) | `[x,y,z,vx,vy,θ,ω,(α)]` | 底盘匀速 + 装甲环自转；观测 = 底盘 + r·(cosθ, sinθ) |
+| SPIN-G | [spin_gen.hpp](include/kf/models/spin_gen.hpp) | +`ox,oy,a,b` | 偏心圆 / 椭圆环：观测 = 底盘 + (ox + a·cosθ, oy + b·sinθ) |
 | IMM | [imm.hpp](include/kf/imm.hpp) | — | 支持不同状态维度（嵌入公共空间） |
+
+CT / SPIN 用 [ekf.hpp](include/kf/ekf.hpp)：数值雅可比 + 非线性观测 `h(x)`；SPIN 的 `r` 用已知
+装甲半径（0.22 m）。
 
 CA / CJ 的 Q（单轴，乘 σ²）：
 
@@ -123,11 +131,49 @@ python3 tools/tune.py                  # 默认 configs/kf/tune.yaml
 | IMM CV+CV | 0.01 / 10 | **2.85** | 3.11 |
 | IMM CV9+CA | 0.01 / 20 | 2.87 | 3.15 |
 | IMM CA+CA | 0.05 / 20 | 2.89 | 3.13 |
+| CTRV | σv=2, σω=5 | 2.59 | 2.84 |
+| CTRA | σa=5, σα=10 | 2.73 | 3.24 |
+| CTRJ | σj=20, σα=10 | 2.70 | 3.04 |
+| **SPIN** | σv=0.5, σω=2 | **2.17** | **2.23** |
+| SPIN+A | σω=1, σα=2 | 2.52 | 2.65 |
 
-- 统一参数下 **IMM CV+CV 仍最好**（2.85），单 CV 2.90；
+- **SPIN 明显最好（2.17）**：它直接用了“底盘平移 + 装甲环自转”的物理结构；
+- 协调转弯族（CTRV 2.59）比线性 CV/CA 好，但不如 SPIN——观测点是平移+自转的叠加，不是纯圆弧；
+- CTRA/CTRJ 加上 α/j 反而略差（2.70–2.73）：小陀螺转速恒定，多出的状态只贡献噪声；
+- 统一参数下 IMM CV+CV 2.85、单 CV 2.90；
 - 逐工况最优和统一参数的差距主要在 `shuttle`（CV 2.41 vs 2.76，IMM 2.32 vs 2.37），
   说明“一套通用参数”的代价主要来自直线工况；
 - 慢模型的参数被推到网格下界（0.01 / 0.05）：直线段希望它尽量“硬”，机动交给快模型。
+
+### 偏心 / 椭圆装甲环
+
+仿真器现在支持非圆环（[robot_model.hpp](include/sim/robot/robot_model.hpp)）：
+
+```yaml
+robot:
+  armor_a: 0.42       # 椭圆半长轴
+  armor_b: 0.10       # 椭圆半短轴
+  armor_offset: [0.12, 0.05]   # 环心偏移
+```
+
+新增两个 8 s 工况：[rm_offset_circle_spin.yaml](configs/sim/rm_offset_circle_spin.yaml)（偏心圆）、
+[rm_ellipse_ring_spin.yaml](configs/sim/rm_ellipse_ring_spin.yaml)（椭圆环），对比固定半径 SPIN 与
+自适应几何的 SPIN-G：
+
+| 模型 | 圆环 | 偏心圆 (0.12, 0.05) | 椭圆 (0.42, 0.10) |
+|---|---|---|---|
+| CA 50 | 3.24 | 3.13 | 3.12 |
+| SPIN r=0.22 | 2.64 | 2.66 | 2.38 |
+| SPIN-G | 2.63 | 2.56 | 2.36 |
+| CTRV | 2.84 | 3.59 | 3.67 |
+
+结论：
+
+- **固定半径 SPIN 对几何失配很鲁棒**：偏心圆/椭圆下盒体误差仍在 2.4–2.7 cm，和圆环差不多；
+- 原因是底盘状态是隐变量，几何失配会被“底盘偏移”吸收掉——装甲板照样跟得上；
+- 但代价是**底盘估计会偏**（实测偏 20–34 cm），所以固定 r 的 SPIN 只适合“要板位置”，
+  不能拿它的底盘中心去瞄准；
+- SPIN-G 只带来 0.02–0.10 cm 的板位置提升：几何参数可辨识性弱，收益有限。
 
 ### 噪声 1 cm 对照
 
@@ -153,6 +199,29 @@ python3 tools/plot_tune_compare.py build/kf/tune_result.json build/kf/tune_resul
 - `shuttle` 的 headroom 也缩小（CV 1.49 vs 逐场景最优 1.31，IMM 1.28 vs 1.25）。
 
 测试：`ctest` 有五项：`sim_contract`（含椭圆/变速椭圆轨迹）、`imm`、`ca`、`cj`。
+
+### 提前量预测误差（击打相关）
+
+```bash
+./build/kf_future                 # 默认 configs/kf/future.yaml
+python3 tools/plot_future.py      # build/kf/future.png
+```
+
+每个观测帧把滤波器向前推 H 秒（不更新），与 `t+H` 的真值比较。四个自转/变速工况合计：
+
+| 模型 | 0 ms | 40 ms | 80 ms | 120 ms | 160 ms |
+|---|---|---|---|---|---|
+| CV | 2.94 | 5.68 | 10.03 | 15.83 | 22.92 |
+| CA | 2.96 | 5.77 | 10.44 | 17.17 | 26.15 |
+| CTRV | 2.81 | 5.15 | 8.82 | 13.69 | 19.66 |
+| **SPIN** | **2.50** | **4.20** | **6.71** | **9.91** | **13.68** |
+
+结论：
+
+- **“当前帧”的板位置误差 2.5–3 cm，不代表“击打点”的误差**；
+- 预测误差随时长近似线性增长：SPIN 在 80 ms 约 6.7 cm、120 ms 约 9.9 cm；
+- 装甲板 13×12 cm，命中容差约 ±6 cm，所以 **SPIN 在 ≤80 ms 的提前量内是安全的，超过 100 ms 就开始赌**；
+- 要提升命中率，优先压缩总延迟，其次才是换模型。
 
 ## 两个 dt，别混
 
