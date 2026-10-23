@@ -20,6 +20,8 @@ DEFAULT_CONFIGS = [
     "configs/kf/ellipse_var_spin.yaml",
     "configs/kf/cruise_spin.yaml",
     "configs/kf/cruise_var_spin.yaml",
+    "configs/kf/offset_circle_spin.yaml",
+    "configs/kf/ellipse_ring_spin.yaml",
 ]
 OUT = ROOT / "build" / "kf" / "compare_all.png"
 

@@ -33,9 +33,10 @@ inline std::array<ArmorTruth, kMaxArmors> makeArmors(const RobotGeometry& g,
 
         ArmorTruth a;
         a.index = i;
+        const double dz = g.armor_dz + ((i % 2 == 0) ? 0.5 * g.armor_dh : -0.5 * g.armor_dh);
         a.p = center + body * Vec3(g.armor_offset.x() + ax * std::cos(ang),
                                    g.armor_offset.y() + bx * std::sin(ang),
-                                   g.armor_dz);
+                                   dz);
         a.q = qa;
         a.n = qa * Vec3(1.0, 0.0, 0.0);
         a.up = qa * Vec3(0.0, 0.0, 1.0);

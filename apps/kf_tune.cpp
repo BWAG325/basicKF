@@ -23,6 +23,7 @@
 #include "kf/models/cv9.hpp"
 #include "kf/models/ct.hpp"
 #include "kf/models/spin.hpp"
+#include "kf/models/spin_gen.hpp"
 #include "sim/config.hpp"
 #include "sim/core/paths.hpp"
 #include "sim/sensing/sensor.hpp"
@@ -47,7 +48,7 @@ struct Scenario {
     Eigen::Matrix3d R = Eigen::Matrix3d::Identity() * 0.0004;
 };
 
-enum class Kind { CV, CA, CJ, CTRV, CTRA, CTRJ, SPIN, SPINA, IMM_CC, IMM_CV9CA, IMM_CACA };
+enum class Kind { CV, CA, CJ, CTRV, CTRA, CTRJ, SPIN, SPINA, SPING, IMM_CC, IMM_CV9CA, IMM_CACA };
 
 const char* kindName(Kind k) {
     switch (k) {
@@ -59,6 +60,7 @@ const char* kindName(Kind k) {
         case Kind::CTRJ: return "CTRJ";
         case Kind::SPIN: return "SPIN";
         case Kind::SPINA: return "SPIN+A";
+        case Kind::SPING: return "SPIN-G";
         case Kind::IMM_CC: return "IMM CV+CV";
         case Kind::IMM_CV9CA: return "IMM CV9+CA";
         case Kind::IMM_CACA: return "IMM CA+CA";
@@ -155,6 +157,19 @@ Runner makeRunner(Kind kind, const Params& p, const Scenario& sc) {
         return r;
     }
 
+    if (kind == Kind::SPING) {
+        kf::SpinGenParams sp;
+        sp.init_radius = 0.22;
+        sp.sigma_v = p.spin_v;
+        sp.sigma_w = p.spin_w;
+        sp.R = R;
+
+        auto f = std::make_unique<kf::SpinGenKalman>(sp);
+        f->init(z, v);
+        f->setMeasurementNoise(R);
+        r.single = std::move(f);
+        return r;
+    }
     if (kind == Kind::SPIN || kind == Kind::SPINA) {
         kf::SpinParams sp;
         sp.armor_radius = 0.22;
@@ -455,6 +470,24 @@ int main(int argc, char* argv[]) {
                 }
             record(Kind::SPINA, best,
                    "spin_w=" + fmt(best.params.spin_w) + ", spin_alpha=" + fmt(best.params.spin_alpha),
+                   per_scene_best(all));
+        }
+
+        // ---- SPIN-G ----
+        {
+            std::vector<Score> all;
+            Score best;
+            for (double sv : spin_v_grid)
+                for (double sw : spin_w_grid) {
+                    Params p;
+                    p.spin_v = sv;
+                    p.spin_w = sw;
+                    Score sc = evaluate(Kind::SPING, p, scenarios, warmup, use_max);
+                    all.push_back(sc);
+                    if (sc.objective < best.objective) best = sc;
+                }
+            record(Kind::SPING, best,
+                   "spin_v=" + fmt(best.params.spin_v) + ", spin_w=" + fmt(best.params.spin_w),
                    per_scene_best(all));
         }
 

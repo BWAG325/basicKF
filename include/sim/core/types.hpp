@@ -74,6 +74,7 @@ struct RobotGeometry {
     double armor_b = 0.0;        ///< 椭圆半短轴；<=0 表示用 armor_radius
     Vec2 armor_offset = Vec2::Zero();  ///< 环心相对车体中心的水平偏移 [m]
     double armor_dz = 0.0;       ///< 板中心相对车体中心的车体 z 偏移 [m]
+    double armor_dh = 0.0;       ///< 高低板高度差：偶数板 +dh/2，奇数板 -dh/2 [m]
     double armor_width = 0.13;
     double armor_height = 0.12;
     double body_radius = 0.30;

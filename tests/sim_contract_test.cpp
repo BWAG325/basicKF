@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -616,6 +617,52 @@ void testArmorRingShape() {
     check(dmax > 0.40 && dmin < 0.12, "椭圆装甲环：到车体中心的距离应随角度变化");
 }
 
+void testAllSimConfigs() {
+    const std::filesystem::path dir = sim::resolvePath("configs/sim/");
+    int count = 0;
+    for (const auto& e : std::filesystem::directory_iterator(dir)) {
+        if (e.path().extension() != ".yaml") continue;
+        ++count;
+        const std::string name = e.path().filename().string();
+
+        auto setup = sim::loadSimSetup(e.path().string());
+        sim::Simulator sim(setup.geometry, setup.initial, std::move(setup.controller), setup.min_dt);
+        for (int k = 0; k <= 100; ++k) sim.advanceTo(k * 0.02);
+
+        const sim::RobotTruth tr = sim.truth();
+        check(std::isfinite(tr.chassis.p.norm()) && std::isfinite(tr.chassis.v.norm()) &&
+                  std::isfinite(tr.chassis.q.norm()),
+              name + ": 2 s 后状态应有限");
+        check(tr.armor_count > 0, name + ": 应有装甲板");
+
+        const sim::GaussianSensor sensor(setup.sensor);
+        int valid = 0;
+        for (int k = 0; k < 40; ++k) {
+            const double t = 2.0 + k * 0.04;
+            sim.advanceTo(t);
+            const sim::Observation obs = sensor.observeAt(sim.truth(), t, static_cast<std::uint64_t>(k));
+            valid += obs.valid ? 1 : 0;
+        }
+        check(valid > 0, name + ": 2 s 后应至少有一次有效观测");
+    }
+    check(count >= 14, "configs/sim 应覆盖全部工况（当前 " + std::to_string(count) + " 个）");
+}
+
+void testArmorRingOffset() {
+    const std::string dir = sim::resolvePath("configs/sim/");
+    auto setup = sim::loadSimSetup(dir + "rm_offset_circle_spin.yaml");
+    sim::Simulator sim(setup.geometry, setup.initial, std::move(setup.controller), setup.min_dt);
+    const sim::RobotTruth tr = sim.truth();
+
+    double dmin = 1e9, dmax = 0.0;
+    for (int i = 0; i < tr.armor_count; ++i) {
+        const double d = (tr.armors[static_cast<std::size_t>(i)].p - tr.chassis.p).norm();
+        dmin = std::min(dmin, d);
+        dmax = std::max(dmax, d);
+    }
+    check(dmax > 0.33 && dmin < 0.12, "偏心圆环：到车体中心的距离应有明显变化");
+}
+
 }  // namespace
 
 int main() {
@@ -644,6 +691,8 @@ int main() {
     testConfigFiles();
     testEllipseController();
     testArmorRingShape();
+    testArmorRingOffset();
+    testAllSimConfigs();
 
     if (g_fail == 0) {
         std::cout << "all sim contract tests passed\n";

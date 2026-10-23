@@ -16,6 +16,7 @@
 #include "kf/models/ct.hpp"
 #include "kf/models/cv.hpp"
 #include "kf/models/spin.hpp"
+#include "kf/models/spin_gen.hpp"
 #include "sim/config.hpp"
 #include "sim/core/paths.hpp"
 #include "sim/sensing/sensor.hpp"
@@ -29,7 +30,7 @@ const std::string keys =
 namespace {
 
 struct Sample { double t; Eigen::Vector3d truth, obs; };
-using FilterVar = std::variant<kf::CvKalman, kf::CaKalman, kf::CtKalman, kf::SpinKalman>;
+using FilterVar = std::variant<kf::CvKalman, kf::CaKalman, kf::CtKalman, kf::SpinKalman, kf::SpinGenKalman>;
 
 Eigen::Vector3d posOf(const FilterVar& f) {
     return std::visit([](const auto& x) { return Eigen::Vector3d(x.position()); }, f);
@@ -49,6 +50,10 @@ FilterVar makeFilter(const std::string& type, const Eigen::Vector3d& z, const Ei
     if (type == "ctrv") {
         kf::CtParams p; p.sigma_v = 2.0; p.sigma_w = 2.0; p.R = R;
         kf::CtKalman f(p); f.init(z, v); f.setMeasurementNoise(R); return f;
+    }
+    if (type == "spin_g") {
+        kf::SpinGenParams p; p.sigma_v = 2.0; p.sigma_w = 2.0; p.R = R;
+        kf::SpinGenKalman f(p); f.init(z, v); f.setMeasurementNoise(R); return f;
     }
     kf::SpinParams p; p.sigma_v = 2.0; p.sigma_w = 2.0; p.R = R;
     kf::SpinKalman f(p); f.init(z, v); f.setMeasurementNoise(R); return f;

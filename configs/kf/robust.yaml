@@ -4,10 +4,14 @@ scenarios:
   - {name: shuttle_spin,     path: configs/sim/rm_shuttle_spin.yaml,     duration: 16}
   - {name: ellipse_spin,     path: configs/sim/rm_ellipse_spin.yaml,     duration: 16}
   - {name: ellipse_ring_spin,path: configs/sim/rm_ellipse_ring_spin.yaml,duration: 8}
+  - {name: shuttle,          path: configs/sim/rm_shuttle.yaml,          duration: 16}
+  - {name: ellipse_var_spin, path: configs/sim/rm_ellipse_var_spin.yaml, duration: 16}
+  - {name: cruise_var_spin,  path: configs/sim/rm_cruise_var_spin.yaml,  duration: 12}
+  - {name: offset_circle_spin,path: configs/sim/rm_offset_circle_spin.yaml,duration: 8}
 
 warmup: 25
 true_sigma: 0.02
 r_scales: [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 10.0]
-models: [cv, ca, ctrv, spin]
+models: [cv, ca, ctrv, spin, spin_g]
 output:
   csv: build/kf/robust.csv

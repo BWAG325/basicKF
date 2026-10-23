@@ -1,35 +1,22 @@
-# 对比配置：shuttle_spin
 sim: configs/sim/rm_shuttle_spin.yaml
 duration: 16.0
 warmup: 25
-measurement_sigma: 0.02   # 观测噪声真实值（sensor.position_sigma）
-
+measurement_sigma: 0.02
 output:
   csv: build/kf/compare_shuttle_spin.csv
   png: build/kf/compare_shuttle_spin.png
-
 models:
-  # 过程噪声按物理先验给定，不针对单段数据调参
-  - {name: "CA 50", type: ca, jerk: 50}
-  - {name: "CJ 300", type: cj, snap: 300}
-
-  - name: "IMM CV+CV"
+  - {name: "SPIN", type: spin, spin_v: 1, spin_w: 2}
+  - {name: "SPIN-G", type: spin_g, spin_v: 1, spin_w: 2, spin_radius: 0.22}
+  - name: "IMM SPIN slow+fast"
     type: imm
     pi: [0.95, 0.95]
     models:
-      - {type: cv, sigma: 0.5}
-      - {type: cv, sigma: 10}
-
-  - name: "IMM CV9+CA"
+      - {type: spin, spin_v: 0.5, spin_w: 0.5}
+      - {type: spin, spin_v: 2, spin_w: 5}
+  - name: "IMM SPIN+SPIN-G"
     type: imm
-    pi: [0.95, 0.95]
+    pi: [0.9, 0.9]
     models:
-      - {type: cv9, sigma: 0.5}
-      - {type: ca, jerk: 50}
-
-  - name: "IMM CA+CA"
-    type: imm
-    pi: [0.95, 0.95]
-    models:
-      - {type: ca, jerk: 5}
-      - {type: ca, jerk: 50}
+      - {type: spin, spin_v: 2, spin_w: 5}
+      - {type: spin_g, spin_v: 0.5, spin_w: 1, spin_radius: 0.22}

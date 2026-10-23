@@ -4,7 +4,18 @@ warmup: 25
 measurement_sigma: 0.02
 output: {csv: build/kf/compare_geom_cruise.csv, png: build/kf/compare_geom_cruise.png}
 models:
-  - {name: "CA 50", type: ca, jerk: 50}
   - {name: "SPIN r=0.22", type: spin, spin_v: 2, spin_w: 2}
   - {name: "SPIN-G", type: spin_g, spin_v: 2, spin_w: 2, spin_radius: 0.22}
   - {name: "CTRV", type: ctrv, sigma_v: 2, sigma_w: 5}
+  - name: "IMM CV+CV"
+    type: imm
+    pi: [0.95, 0.95]
+    models:
+      - {type: cv, sigma: 0.5}
+      - {type: cv, sigma: 10}
+  - name: "IMM CV9+CA"
+    type: imm
+    pi: [0.95, 0.95]
+    models:
+      - {type: cv9, sigma: 0.5}
+      - {type: ca, jerk: 50}

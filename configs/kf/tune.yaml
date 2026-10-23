@@ -6,6 +6,8 @@ scenarios:
   - {name: ellipse_var_spin, path: configs/sim/rm_ellipse_var_spin.yaml, duration: 16}
   - {name: cruise_spin,      path: configs/sim/rm_cruise_spin.yaml,      duration: 8}
   - {name: cruise_var_spin,  path: configs/sim/rm_cruise_var_spin.yaml,  duration: 12}
+  - {name: offset_circle_spin, path: configs/sim/rm_offset_circle_spin.yaml, duration: 8}
+  - {name: ellipse_ring_spin,  path: configs/sim/rm_ellipse_ring_spin.yaml,  duration: 8}
 
 warmup: 25
 measurement_sigma: 0.02
