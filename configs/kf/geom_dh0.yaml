@@ -4,12 +4,4 @@ warmup: 25
 measurement_sigma: 0.02
 output: {csv: build/kf/compare_dh0.csv, png: build/kf/compare_dh0.png}
 models:
-  - {name: "SPIN", type: spin, spin_v: 2, spin_w: 2}
-  - {name: "SPIN-G", type: spin_g, spin_v: 2, spin_w: 2, spin_radius: 0.22}
-  - {name: "CTRV", type: ctrv, sigma_v: 2, sigma_w: 5}
-  - name: "IMM CV+CV"
-    type: imm
-    pi: [0.95, 0.95]
-    models:
-      - {type: cv, sigma: 0.5}
-      - {type: cv, sigma: 10}
+  - {name: "CV", type: cv, q_xyz: 100, q_yaw: 75}

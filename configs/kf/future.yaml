@@ -12,7 +12,5 @@ scenarios:
 warmup: 25
 measurement_sigma: 0.02
 horizons: [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16]
-models: [cv, ca, ctrv, spin, spin_g]
-
-output:
-  csv: build/kf/future.csv
+models:
+  - {name: "CV", type: cv, q_xyz: 100, q_yaw: 75}

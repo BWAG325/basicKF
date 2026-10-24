@@ -52,41 +52,10 @@ target_link_libraries(sim_demo PRIVATE sim_core ${OpenCV_LIBS})
 target_include_directories(sim_demo PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_compile_options(sim_demo PRIVATE -Wall -Wextra -Wpedantic)
 
-add_executable(kf_demo apps/kf_demo.cpp)
-target_link_libraries(kf_demo PRIVATE sim_core kf_core ${OpenCV_LIBS})
-target_include_directories(kf_demo PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_compile_options(kf_demo PRIVATE -Wall -Wextra -Wpedantic)
-
 add_executable(kf_compare apps/kf_compare.cpp)
 target_link_libraries(kf_compare PRIVATE sim_core kf_core ${YAML_CPP_TARGET} ${OpenCV_LIBS})
 target_include_directories(kf_compare PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_compile_options(kf_compare PRIVATE -Wall -Wextra -Wpedantic)
-
-add_executable(kf_tune apps/kf_tune.cpp)
-target_link_libraries(kf_tune PRIVATE sim_core kf_core ${YAML_CPP_TARGET} ${OpenCV_LIBS})
-target_include_directories(kf_tune PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_compile_options(kf_tune PRIVATE -Wall -Wextra -Wpedantic)
-
-add_executable(imm_demo apps/imm_demo.cpp)
-target_link_libraries(imm_demo PRIVATE sim_core kf_core ${OpenCV_LIBS})
-target_include_directories(imm_demo PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_compile_options(imm_demo PRIVATE -Wall -Wextra -Wpedantic)
-
-add_executable(imm_test tests/imm_test.cpp)
-target_link_libraries(imm_test PRIVATE kf_core)
-target_compile_options(imm_test PRIVATE -Wall -Wextra -Wpedantic)
-
-add_executable(ca_test tests/ca_test.cpp)
-target_link_libraries(ca_test PRIVATE kf_core)
-target_compile_options(ca_test PRIVATE -Wall -Wextra -Wpedantic)
-
-add_executable(cj_test tests/cj_test.cpp)
-target_link_libraries(cj_test PRIVATE kf_core)
-target_compile_options(cj_test PRIVATE -Wall -Wextra -Wpedantic)
-
-add_executable(ct_spin_test tests/ct_spin_test.cpp)
-target_link_libraries(ct_spin_test PRIVATE kf_core)
-target_compile_options(ct_spin_test PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(sim_contract_test tests/sim_contract_test.cpp)
 target_link_libraries(sim_contract_test PRIVATE sim_core)
@@ -94,9 +63,5 @@ target_compile_options(sim_contract_test PRIVATE -Wall -Wextra -Wpedantic)
 
 enable_testing()
 add_test(NAME sim_contract COMMAND sim_contract_test)
-add_test(NAME imm COMMAND imm_test)
-add_test(NAME ca COMMAND ca_test)
-add_test(NAME cj COMMAND cj_test)
-add_test(NAME ct_spin COMMAND ct_spin_test)
 add_test(NAME compare_offset COMMAND kf_compare -c=configs/kf/offset_circle_spin.yaml)
 add_test(NAME compare_ellipse_ring COMMAND kf_compare -c=configs/kf/ellipse_ring_spin.yaml)

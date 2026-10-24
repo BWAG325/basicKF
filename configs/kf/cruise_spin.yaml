@@ -6,17 +6,4 @@ output:
   csv: build/kf/compare_cruise_spin.csv
   png: build/kf/compare_cruise_spin.png
 models:
-  - {name: "SPIN", type: spin, spin_v: 1, spin_w: 2}
-  - {name: "SPIN-G", type: spin_g, spin_v: 1, spin_w: 2, spin_radius: 0.22}
-  - name: "IMM SPIN slow+fast"
-    type: imm
-    pi: [0.95, 0.95]
-    models:
-      - {type: spin, spin_v: 0.5, spin_w: 0.5}
-      - {type: spin, spin_v: 2, spin_w: 5}
-  - name: "IMM SPIN+SPIN-G"
-    type: imm
-    pi: [0.9, 0.9]
-    models:
-      - {type: spin, spin_v: 2, spin_w: 5}
-      - {type: spin_g, spin_v: 0.5, spin_w: 1, spin_radius: 0.22}
+  - {name: "CV", type: cv, q_xyz: 100, q_yaw: 75}
