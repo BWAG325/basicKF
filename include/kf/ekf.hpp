@@ -27,10 +27,12 @@ public:
         Eigen::MatrixXd H;  ///< nz × nx，线性观测（Hx 为空时使用）
         std::function<Eigen::MatrixXd(const Eigen::VectorXd&)> Hx;  ///< 可选：状态相关观测矩阵
         std::function<Eigen::VectorXd(const Eigen::VectorXd&)> h;   ///< 可选：非线性观测方程
+        std::function<Eigen::MatrixXd(const Eigen::VectorXd&, const Eigen::VectorXd&)> Rz; ///< 可选：R(z,x)
+        std::function<Eigen::VectorXd(const Eigen::VectorXd&, const Eigen::VectorXd&)> zdiff; ///< 可选：角度残差
     };
 
     Ekf(Model model, const Eigen::VectorXd& x0, const Eigen::MatrixXd& P0,
-        const Eigen::Matrix3d& R)
+        const Eigen::MatrixXd& R)
         : model_(std::move(model)), x_(x0), P_(P0), R_(R) {
         if (model_.nx <= 0 || model_.nz <= 0) throw std::invalid_argument("Ekf: 维度非法");
         if (x0.size() != model_.nx) throw std::invalid_argument("Ekf: x0 维度不匹配");
@@ -66,8 +68,9 @@ public:
         if (model_.nx == 0) return;
         const Eigen::MatrixXd H = model_.Hx ? model_.Hx(x_) : model_.H;
         const Eigen::VectorXd hx = model_.h ? model_.h(x_) : (H * x_);
-        const Eigen::VectorXd nu = z - hx;
-        S_ = H * P_ * H.transpose() + R_;
+        const Eigen::MatrixXd R = model_.Rz ? model_.Rz(z, x_) : R_;
+        const Eigen::VectorXd nu = model_.zdiff ? model_.zdiff(z, hx) : (z - hx);
+        S_ = H * P_ * H.transpose() + R;
 
         const Eigen::MatrixXd PHt = P_ * H.transpose();
         const Eigen::MatrixXd K = PHt * S_.inverse();
@@ -75,7 +78,7 @@ public:
         x_ += K * nu;
 
         const Eigen::MatrixXd IKH = Eigen::MatrixXd::Identity(model_.nx, model_.nx) - K * H;
-        P_ = IKH * P_ * IKH.transpose() + K * R_ * K.transpose();
+        P_ = IKH * P_ * IKH.transpose() + K * R * K.transpose();
 
         nu_ = nu;
         has_update_ = true;
@@ -107,6 +110,7 @@ public:
     }
 
     void setMeasurementNoise(const Eigen::Matrix3d& R) { R_ = R; }
+    void setMeasurementNoise(const Eigen::MatrixXd& R) { R_ = R; }
 
     void setModel(Model model) {
         if (model.nx != x_.size()) throw std::invalid_argument("Ekf::setModel: nx 不匹配");
@@ -123,7 +127,7 @@ private:
     Model model_;
     Eigen::VectorXd x_;
     Eigen::MatrixXd P_;
-    Eigen::Matrix3d R_;
+    Eigen::MatrixXd R_;
     Eigen::VectorXd nu_;
     Eigen::MatrixXd S_;
     bool has_update_ = false;

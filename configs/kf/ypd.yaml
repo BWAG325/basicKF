@@ -1,0 +1,11 @@
+warmup: 25
+models: [cv, ukf, so3]
+scenarios:
+  - {name: shuttle,           path: configs/sim/rm_shuttle.yaml,           duration: 16}
+  - {name: shuttle_spin,      path: configs/sim/rm_shuttle_spin.yaml,      duration: 16}
+  - {name: ellipse_spin,      path: configs/sim/rm_ellipse_spin.yaml,      duration: 16}
+  - {name: ellipse_var_spin,  path: configs/sim/rm_ellipse_var_spin.yaml,  duration: 16}
+  - {name: cruise_spin,       path: configs/sim/rm_cruise_spin.yaml,       duration: 8}
+  - {name: cruise_var_spin,   path: configs/sim/rm_cruise_var_spin.yaml,   duration: 12}
+  - {name: offset_circle_spin,path: configs/sim/rm_offset_circle_spin.yaml,duration: 8}
+  - {name: ellipse_ring_spin, path: configs/sim/rm_ellipse_ring_spin.yaml, duration: 8}

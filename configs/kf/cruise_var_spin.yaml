@@ -7,3 +7,11 @@ output:
   png: build/kf/compare_cruise_var_spin.png
 models:
   - {name: "CV", type: cv, q_xyz: 100, q_yaw: 75}
+  - {name: "CV-Fusion", type: fusion, q_xyz: 100, q_yaw: 75, q_xyz2: 100, q_yaw2: 100}
+  - name: "IMM Plate"
+    type: imm
+    pi: [0.95, 0.95]
+    models:
+      - {type: plate, plate_v: 0.5, plate_w: 0.5}
+      - {type: plate, plate_v: 2, plate_w: 2}
+  - {name: "CV-IMM", type: cv_imm, q_xyz: 100, q_yaw: 75, q_xyz2: 100, q_yaw2: 100}

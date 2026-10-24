@@ -1,0 +1,54 @@
+# 原地变速小陀螺 → 移动到另一处 → 再原地变速小陀螺；全程小陀螺，车体带斜坡倾角
+sim:
+  min_dt: 0.001
+
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+
+initial:
+  position: [0.0, 0.0, 0.18]
+  velocity: [0.0, 0.0, 0.0]
+  yaw: 0.0
+  pitch: 0.18      # 斜坡：约 10°
+  roll: 0.08
+  spin_phase: 0.0
+
+plan:
+  # 原地变速小陀螺
+  - {duration: 1.0, spin_rate: 3.0}
+  - {duration: 1.0, spin_rate: 6.0}
+  - {duration: 1.0, spin_rate: 9.0}
+  - {duration: 1.0, spin_rate: 5.0}
+  # 转向 + 移动到另一处（全程小陀螺）
+  - {duration: 1.0, turn_rate: 1.5708, spin_rate: 6.0}
+  - {duration: 1.0, accel: 2.0, spin_rate: 6.0}
+  - {duration: 1.5, spin_rate: 6.0}
+  - {duration: 1.0, accel: -2.0, spin_rate: 6.0}
+  # 再原地变速小陀螺
+  - {duration: 1.0, spin_rate: 4.0}
+  - {duration: 1.0, spin_rate: 7.0}
+  - {duration: 1.0, spin_rate: 10.0}
+  - {duration: 1.0, spin_rate: 6.0}
+
+sensor:
+  schedule:
+    t0: 0.0
+    interval: 0.0125
+    jitter: 0.002
+  seed: 31
+  position_sigma: [0.02, 0.02, 0.02]
+  normal_sigma: 0.01
+  dropout: 0.02
+  max_range: 40.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [0.0, -14.0, 5.0]
+    target: [0.0, 1.2, 0.5]
+    fov_half_deg: 70.0
+    output_in_camera_frame: false

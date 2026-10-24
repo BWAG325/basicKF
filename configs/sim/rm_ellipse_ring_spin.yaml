@@ -26,8 +26,8 @@ plan:
 sensor:
   schedule:
     t0: 0.0
-    interval: 0.04
-    jitter: 0.01
+    interval: 0.0125
+    jitter: 0.002
   seed: 29
   position_sigma: [0.02, 0.02, 0.02]
   normal_sigma: 0.01

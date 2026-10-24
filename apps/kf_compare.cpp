@@ -15,7 +15,10 @@
 #include <vector>
 
 #include "kf/imm.hpp"
+#include "kf/fusion.hpp"
 #include "kf/models/cv.hpp"
+#include "kf/cv_imm.hpp"
+#include "kf/models/plate_cv.hpp"
 #include "sim/config.hpp"
 #include "sim/core/paths.hpp"
 #include "sim/sensing/sensor.hpp"
@@ -37,6 +40,10 @@ struct Spec {
     std::string type;
     double q_xyz = 100.0;
     double q_yaw = 75.0;
+    double q_xyz2 = 400.0;
+    double q_yaw2 = 300.0;
+    double plate_v = 2.0;
+    double plate_w = 2.0;
     double armor_radius = 0.22;
     std::vector<double> pi;
     std::vector<Spec> subs;
@@ -49,6 +56,10 @@ Spec parseSpec(const YAML::Node& n) {
     s.name = n["name"] ? n["name"].as<std::string>() : s.type;
     if (n["q_xyz"]) s.q_xyz = n["q_xyz"].as<double>();
     if (n["q_yaw"]) s.q_yaw = n["q_yaw"].as<double>();
+    if (n["q_xyz2"]) s.q_xyz2 = n["q_xyz2"].as<double>();
+    if (n["q_yaw2"]) s.q_yaw2 = n["q_yaw2"].as<double>();
+    if (n["plate_v"]) s.plate_v = n["plate_v"].as<double>();
+    if (n["plate_w"]) s.plate_w = n["plate_w"].as<double>();
     if (n["pi"]) {
         for (const auto& v : n["pi"]) s.pi.push_back(v.as<double>());
     }
@@ -76,6 +87,36 @@ struct Runner {
 
 std::unique_ptr<kf::IFilter> makeLeaf(const Spec& s, const Eigen::Vector3d& z,
                                       const Eigen::Vector3d& v, const Eigen::Matrix3d& R) {
+    if (s.type == "plate") {
+        kf::PlateCvParams p; p.sigma_v = s.plate_v; p.sigma_w = s.plate_w; p.R = R;
+        auto f = std::make_unique<kf::PlateCvKalman>(p);
+        f->init(z, v);
+        f->setMeasurementNoise(R);
+        return f;
+    }
+    if (s.type == "cv_imm") {
+        kf::CvParams a; a.q_xyz = s.q_xyz; a.q_yaw = s.q_yaw; a.armor_radius = s.armor_radius;
+        a.armor_id = g_armor_id; a.R = R;
+        kf::CvParams b = a; b.q_xyz = s.q_xyz2; b.q_yaw = s.q_yaw2;
+        Eigen::Matrix2d Pi; Pi << 0.95, 0.05, 0.05, 0.95;
+        auto f = std::make_unique<kf::CvImm>(a, b, Pi, Eigen::Vector2d(0.5, 0.5));
+        f->init(z, v);
+        f->setMeasurementNoise(R);
+        return f;
+    }
+    if (s.type == "fusion") {
+        std::vector<std::unique_ptr<kf::IFilter>> models;
+        for (auto q : {std::pair<double,double>{s.q_xyz, s.q_yaw}, {s.q_xyz2, s.q_yaw2}}) {
+            kf::CvParams p; p.q_xyz = q.first; p.q_yaw = q.second; p.armor_radius = s.armor_radius;
+            p.armor_id = g_armor_id; p.R = R;
+            auto f = std::make_unique<kf::CvKalman>(p);
+            f->init(z, v);
+            f->setMeasurementNoise(R);
+            models.push_back(std::move(f));
+        }
+        Eigen::Matrix2d Pi; Pi << 0.95, 0.05, 0.05, 0.95;
+        return std::make_unique<kf::OutputFusion>(std::move(models), Pi, Eigen::Vector2d(0.5, 0.5));
+    }
     if (s.type != "cv") throw std::runtime_error("未知模型类型: " + s.type);
     kf::CvParams p;
     p.q_xyz = s.q_xyz;

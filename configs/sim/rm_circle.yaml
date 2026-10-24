@@ -30,8 +30,8 @@ preset:
 sensor:
   schedule:
     t0: 0.0
-    interval: 0.04
-    jitter: 0.015
+    interval: 0.0125
+    jitter: 0.0025
   seed: 21
   position_sigma: [0.01, 0.01, 0.01]
   normal_sigma: 0.01

@@ -42,6 +42,12 @@ target_link_libraries(kf_future PRIVATE sim_core kf_core ${YAML_CPP_TARGET} ${Op
 target_include_directories(kf_future PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_compile_options(kf_future PRIVATE -Wall -Wextra -Wpedantic)
 
+add_executable(kf_ypd_compare apps/kf_ypd_compare.cpp)
+target_link_libraries(kf_ypd_compare PRIVATE sim_core kf_core)
+
+add_executable(kf_param_robust apps/kf_param_robust.cpp)
+target_link_libraries(kf_param_robust PRIVATE sim_core kf_core)
+
 add_executable(kf_robust apps/kf_robust.cpp)
 target_link_libraries(kf_robust PRIVATE sim_core kf_core ${YAML_CPP_TARGET} ${OpenCV_LIBS})
 target_include_directories(kf_robust PRIVATE ${OpenCV_INCLUDE_DIRS})

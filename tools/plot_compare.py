@@ -32,8 +32,9 @@ def main():
     warmup = int(meta.get("warmup", 0))
 
     n_imm = sum(1 for m in models if m["imm"])
-    fig = plt.figure(figsize=(13, 10))
-    gs = GridSpec(3, 3, figure=fig, height_ratios=[1.05, 1, 1])
+    n_rows = 3 if n_imm else 2
+    fig = plt.figure(figsize=(13, 6.5 if n_imm == 0 else 10))
+    gs = GridSpec(n_rows, 3, figure=fig, height_ratios=[1.05] + [1] * (n_rows - 1))
 
     ax = fig.add_subplot(gs[0, :])
     for i, m in enumerate(models):
@@ -62,9 +63,9 @@ def main():
             color="#4c78a8", lw=2, label="truth")
     ax.scatter([float(r["obs_x"]) for r in rows], [float(r["obs_y"]) for r in rows],
                s=4, color="#9aa0a6", alpha=0.4, label="obs")
-    if models:
-        ax.plot([float(r["r0_x"]) for r in rows], [float(r["r0_y"]) for r in rows],
-                color=COLORS[0], lw=1.2, label=models[0]["name"])
+    for i, m in enumerate(models):
+        ax.plot([float(r[f"r{i}_x"]) for r in rows], [float(r[f"r{i}_y"]) for r in rows],
+                color=COLORS[i % len(COLORS)], lw=1.2, label=m["name"])
     ax.set_title("x-y trajectory (y exaggerated)")
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")

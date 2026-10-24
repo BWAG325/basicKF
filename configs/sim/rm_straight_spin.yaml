@@ -30,8 +30,8 @@ plan:
 sensor:
   schedule:
     t0: 0.0
-    interval: 0.04      # 名义帧间隔 [s]
-    jitter: 0.015       # 每帧 ±抖动，模拟实车非均匀观测
+    interval: 0.0125      # 名义帧间隔 [s]
+    jitter: 0.0025       # 每帧 ±抖动，模拟实车非均匀观测
   seed: 42
   position_sigma: [0.01, 0.01, 0.01]   # 先按对称高斯占位，PnP 误差特性后续再替换
   normal_sigma: 0.01
