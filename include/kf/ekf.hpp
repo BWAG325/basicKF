@@ -27,6 +27,8 @@ public:
         Eigen::MatrixXd H;  ///< nz × nx，线性观测（Hx 为空时使用）
         std::function<Eigen::MatrixXd(const Eigen::VectorXd&)> Hx;  ///< 可选：状态相关观测矩阵
         std::function<Eigen::VectorXd(const Eigen::VectorXd&)> h;   ///< 可选：非线性观测方程
+        std::function<Eigen::MatrixXd(const Eigen::VectorXd&, double)> Fx;  ///< 可选：解析状态转移雅可比
+        std::function<Eigen::VectorXd(const Eigen::VectorXd&, const Eigen::VectorXd&)> xadd;  ///< 可选：状态加法（角度回绕）
         std::function<Eigen::MatrixXd(const Eigen::VectorXd&, const Eigen::VectorXd&)> Rz; ///< 可选：R(z,x)
         std::function<Eigen::VectorXd(const Eigen::VectorXd&, const Eigen::VectorXd&)> zdiff; ///< 可选：角度残差
     };
@@ -50,13 +52,18 @@ public:
         if (!(dt > 0.0) || model_.nx == 0) return;
         const Eigen::VectorXd f0 = model_.f(x_, dt);
 
-        const int n = model_.nx;
-        Eigen::MatrixXd F(n, n);
-        for (int j = 0; j < n; ++j) {
-            const double eps = 1e-6 * std::max(1.0, std::abs(x_[j]));
-            Eigen::VectorXd xp = x_;
-            xp[j] += eps;
-            F.col(j) = (model_.f(xp, dt) - f0) / eps;
+        Eigen::MatrixXd F;
+        if (model_.Fx) {
+            F = model_.Fx(x_, dt);
+        } else {
+            const int n = model_.nx;
+            F.resize(n, n);
+            for (int j = 0; j < n; ++j) {
+                const double eps = 1e-6 * std::max(1.0, std::abs(x_[j]));
+                Eigen::VectorXd xp = x_;
+                xp[j] += eps;
+                F.col(j) = (model_.f(xp, dt) - f0) / eps;
+            }
         }
 
         P_ = F * P_ * F.transpose() + model_.Q(dt);
@@ -68,14 +75,15 @@ public:
         if (model_.nx == 0) return;
         const Eigen::MatrixXd H = model_.Hx ? model_.Hx(x_) : model_.H;
         const Eigen::VectorXd hx = model_.h ? model_.h(x_) : (H * x_);
-        const Eigen::MatrixXd R = model_.Rz ? model_.Rz(z, x_) : R_;
+        const bool use_ext = external_R_ && R_.rows() == model_.nz && R_.cols() == model_.nz;
+        const Eigen::MatrixXd R = use_ext ? R_ : (model_.Rz ? model_.Rz(z, x_) : R_);
         const Eigen::VectorXd nu = model_.zdiff ? model_.zdiff(z, hx) : (z - hx);
         S_ = H * P_ * H.transpose() + R;
 
         const Eigen::MatrixXd PHt = P_ * H.transpose();
         const Eigen::MatrixXd K = PHt * S_.inverse();
 
-        x_ += K * nu;
+        x_ = model_.xadd ? model_.xadd(x_, K * nu) : (x_ + K * nu);
 
         const Eigen::MatrixXd IKH = Eigen::MatrixXd::Identity(model_.nx, model_.nx) - K * H;
         P_ = IKH * P_ * IKH.transpose() + K * R * K.transpose();
@@ -109,8 +117,14 @@ public:
         P_ = P;
     }
 
-    void setMeasurementNoise(const Eigen::Matrix3d& R) { R_ = R; }
-    void setMeasurementNoise(const Eigen::MatrixXd& R) { R_ = R; }
+    void setMeasurementNoise(const Eigen::Matrix3d& R) {
+        R_ = R;
+        external_R_ = model_.nz == 3;
+    }
+    void setMeasurementNoise(const Eigen::MatrixXd& R) {
+        R_ = R;
+        external_R_ = R.rows() == model_.nz && R.cols() == model_.nz;
+    }
 
     void setModel(Model model) {
         if (model.nx != x_.size()) throw std::invalid_argument("Ekf::setModel: nx 不匹配");
@@ -131,6 +145,7 @@ private:
     Eigen::VectorXd nu_;
     Eigen::MatrixXd S_;
     bool has_update_ = false;
+    bool external_R_ = false;
 };
 
 }  // namespace kf

@@ -24,11 +24,29 @@ struct CameraConfig {
 /// 由位置和目标点构造 look-at 旋转（相机 z 轴朝目标）。
 Mat3 lookAtRotation(const Vec3& eye, const Vec3& target);
 
+/// auto_aim Solver 的小装甲物点与哨兵相机内参。enabled 为 false 时观测仍是中心高斯。
+struct PnpConfig {
+    bool enabled = false;
+    double pixel_sigma = 1.0;  ///< 每个角点像素的独立标准差
+    double fx = 1818.3669452465165;
+    double fy = 1822.494494078506;
+    double cx = 751.062265747035;
+    double cy = 530.4367155611213;
+    double k1 = -0.077944626599568856;
+    double k2 = 0.15447826031486889;
+    double p1 = -0.0025714394278524674;
+    double p2 = 0.00083016311301273629;
+    double k3 = 0.0;
+    double armor_width = 0.135;   ///< 与 SMALL_ARMOR_WIDTH 一致
+    double armor_height = 0.056;  ///< 与 LIGHTBAR_LENGTH 一致
+};
+
 struct SensorConfig {
     std::uint64_t seed = 42;
     Vec3 position_sigma = Vec3::Constant(0.01);  ///< 位置噪声 std（输出坐标系逐轴）
     double normal_sigma = 0.01;                  ///< 法向角噪声 std [rad]
     double dropout = 0.0;
+    PnpConfig pnp{};
     double max_range = 20.0;
     double facing_min_cos = 0.2;
     CameraConfig camera{};
@@ -71,6 +89,11 @@ public:
 
 private:
     SensorConfig cfg_;
+
+    [[nodiscard]] Observation observePnp(const ArmorTruth& armor, double t,
+                                         std::uint64_t frame_index, int armor_index,
+                                         double facing, double range, bool in_fov,
+                                         ObservationTruth* anno) const;
 };
 
 }  // namespace sim

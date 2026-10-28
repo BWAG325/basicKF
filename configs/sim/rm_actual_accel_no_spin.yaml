@@ -1,0 +1,41 @@
+# 实际工况 A：加减速/刹停/掉头阶段不开小陀螺
+sim:
+  min_dt: 0.001
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  body_radius: 0.30
+initial:
+  position: [0.0, 0.0, 0.18]
+  velocity: [2.0, 0.0, 0.0]
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  spin_phase: 0.0
+plan:
+  - {duration: 1.0}                         # 匀速
+  - {duration: 0.8, accel: -2.5}            # 刹停 2 -> 0
+  - {duration: 0.5, turn_rate: 3.14159265}  # 原地掉头
+  - {duration: 0.8, accel: 2.5}             # 反向加速 0 -> 2
+  - {duration: 1.0}                         # 反向匀速
+  - {duration: 0.8, accel: -2.5}            # 刹停
+  - {duration: 0.5, turn_rate: 3.14159265}  # 再掉头
+  - {duration: 0.8, accel: 2.5}             # 正向加速
+  - {duration: 1.0}                         # 正向匀速
+sensor:
+  schedule: {t0: 0.0, interval: 0.0125, jitter: 0.002}
+  seed: 21
+  position_sigma: [0.02, 0.02, 0.02]
+  normal_sigma: 0.01
+  dropout: 0.02
+  max_range: 40.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [2.0, -12.0, 4.0]
+    target: [2.0, 0.0, 0.2]
+    fov_half_deg: 65.0
+    output_in_camera_frame: false

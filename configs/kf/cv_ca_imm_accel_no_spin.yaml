@@ -1,0 +1,17 @@
+sim: configs/sim/rm_actual_accel_no_spin.yaml
+duration: 12.0
+warmup: 25
+measurement_sigma: 0.02
+output:
+  csv: build/kf/compare_cv_ca_imm_accel_no_spin.csv
+  png: build/kf/compare_cv_ca_imm_accel_no_spin.png
+models:
+  - {name: "CV", type: cv, q_xyz: 100, q_yaw: 75}
+  - {name: "CA", type: ca, q_yaw: 75, q_jerk: 10, ca_tau: 0, p0_accel_var: 25}
+  - name: "CV+CA IMM"
+    type: imm
+    pi: [0.98, 0.95]
+    mu0: [0.7, 0.3]
+    models:
+      - {type: cv, q_xyz: 100, q_yaw: 75}
+      - {type: ca, q_yaw: 75, q_jerk: 10, ca_tau: 0, p0_accel_var: 25}

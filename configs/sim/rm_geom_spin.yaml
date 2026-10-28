@@ -1,0 +1,36 @@
+# 静止 + 小陀螺 + 非对称几何：r=0.20, l=0.04, h=0.06
+# 用来演示 RTS 对 r/l/h 恒定量估计的改善
+sim: {min_dt: 0.001}
+robot:
+  armors: 4
+  armor_radius: 0.22
+  armor_a: 0.20
+  armor_b: 0.24
+  armor_dz: 0.0
+  armor_width: 0.13
+  armor_height: 0.12
+  armor_dh: 0.06
+  body_radius: 0.30
+initial:
+  position: [0.0, 0.0, 0.18]
+  velocity: [0.0, 0.0, 0.0]
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  spin_phase: 0.0
+plan:
+  - {duration: 6.0, spin_rate: 6.0}
+sensor:
+  schedule: {t0: 0.0, interval: 0.0125, jitter: 0.002}
+  seed: 41
+  position_sigma: [0.02, 0.02, 0.02]
+  normal_sigma: 0.01
+  dropout: 0.02
+  max_range: 40.0
+  facing_min_cos: 0.2
+  camera:
+    enabled: true
+    position: [3.0, -8.0, 3.0]
+    target: [0.0, 0.0, 0.2]
+    fov_half_deg: 65.0
+    output_in_camera_frame: false

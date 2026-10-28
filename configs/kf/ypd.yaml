@@ -1,5 +1,5 @@
 warmup: 25
-models: [cv, ukf, so3]
+models: [cv, ca, cv_ca]
 scenarios:
   - {name: shuttle,           path: configs/sim/rm_shuttle.yaml,           duration: 16}
   - {name: shuttle_spin,      path: configs/sim/rm_shuttle_spin.yaml,      duration: 16}

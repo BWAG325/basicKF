@@ -33,6 +33,9 @@ public:
 
     /// IMM 混合后回写初值。
     virtual void setState(const Eigen::VectorXd& x, const Eigen::MatrixXd& P) = 0;
+
+    /// 本帧测量协方差。YPD 模型在这里改用外部 R，不再走 Rz。
+    virtual void setMeasurementNoise(const Eigen::MatrixXd&) {}
 };
 
 }  // namespace kf

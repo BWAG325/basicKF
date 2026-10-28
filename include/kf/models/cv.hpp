@@ -5,6 +5,7 @@
 #include <cmath>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "kf/ekf.hpp"
 
@@ -12,6 +13,8 @@ namespace kf {
 
 using Vec3 = Eigen::Vector3d;
 using Mat3 = Eigen::Matrix3d;
+using Vec = Eigen::VectorXd;
+using Mat = Eigen::MatrixXd;
 
 /// 复刻 auto_aim_ 的 11 维整车 EKF（观测改成装甲板三维位置）：
 ///   x = [cx, vx, cy, vy, cz, vz, yaw, yaw_rate, r, dr, dh]
@@ -102,8 +105,11 @@ public:
         x0[8] = params_.armor_radius;
         x0[9] = 0.0;
         x0[10] = 0.0;
-        x0[0] = plate.x() + x0[8];
-        x0[2] = plate.y();
+        // 初始观测的是 armor_id 这块板；中心要沿它自己的角度反推。
+        // 原实现固定 +x，只有锁 0 号板时才对。
+        const double ang = params_.armor_id * 2.0 * 3.14159265358979323846 / params_.armor_num;
+        x0[0] = plate.x() + x0[8] * std::cos(ang);
+        x0[2] = plate.y() + x0[8] * std::sin(ang);
         x0[4] = plate.z();
         x0[1] = velocity.x();
         x0[3] = velocity.y();
@@ -137,7 +143,27 @@ public:
 
     [[nodiscard]] int stateDim() const override { return 11; }
     [[nodiscard]] int measDim() const override { return 3; }
-    void predict(double dt) override { filter_.predict(dt); }
+    void predict(double dt) override {
+        if (record_history_) {
+            const Mat F = [&] {
+                Mat Fm(11, 11);
+                const Vec f0 = makeCvModel(params_).f(filter_.state(), dt);
+                for (int j = 0; j < 11; ++j) {
+                    Vec xp = filter_.state();
+                    const double eps = 1e-6 * std::max(1.0, std::abs(xp[j]));
+                    xp[j] += eps;
+                    Fm.col(j) = (makeCvModel(params_).f(xp, dt) - f0) / eps;
+                }
+                return Fm;
+            }();
+            const Mat Q = makeCvModel(params_).Q(dt);
+            const Vec xf = filter_.state();
+            const Mat Pf = filter_.covariance();
+            const Vec xp = makeCvModel(params_).f(xf, dt);
+            history_.push_back({xf, xp, Pf, F * Pf * F.transpose() + Q, F});
+        }
+        filter_.predict(dt);
+    }
     void update(const Eigen::VectorXd& z) override { filter_.update(z); }
     [[nodiscard]] Eigen::VectorXd state() const override { return filter_.state(); }
     [[nodiscard]] Eigen::MatrixXd covariance() const override { return filter_.covariance(); }
@@ -147,9 +173,34 @@ public:
     [[nodiscard]] double logLikelihood() const override { return filter_.logLikelihood(); }
     void setState(const Eigen::VectorXd& x, const Eigen::MatrixXd& P) override { filter_.setState(x, P); }
 
+    // ---- RTS 历史（可选）----
+    struct HistoryStep {
+        Eigen::VectorXd xf, xp;  // filtered at k, predicted at k+1
+        Eigen::MatrixXd Pf, Pp, F;
+    };
+    void startHistory() { history_.clear(); record_history_ = true; }
+    void stopHistory() { record_history_ = false; }
+    [[nodiscard]] const std::vector<HistoryStep>& history() const { return history_; }
+
+    /// 对已记录的 track 做 RTS；返回每个滤波时刻的平滑状态（含最后一拍）。
+    [[nodiscard]] std::vector<Eigen::VectorXd> smooth() const {
+        if (history_.empty()) return {filter_.state()};
+        std::vector<Eigen::VectorXd> xs(history_.size() + 1);
+        xs.back() = filter_.state();  // 最后一拍滤波值未再 predict
+        for (int k = static_cast<int>(history_.size()) - 1; k >= 0; --k) {
+            const auto& h = history_[static_cast<std::size_t>(k)];
+            const Mat C = h.Pf * h.F.transpose() * h.Pp.inverse();
+            xs[static_cast<std::size_t>(k)] =
+                h.xf + C * (xs[static_cast<std::size_t>(k) + 1] - h.xp);
+        }
+        return xs;
+    }
+
 private:
     CvParams params_{};
     Ekf filter_{};
+    std::vector<HistoryStep> history_;
+    bool record_history_ = false;
 };
 
 }  // namespace kf

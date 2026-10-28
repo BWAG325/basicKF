@@ -274,6 +274,21 @@ SimSetup loadSimSetup(const std::string& yaml_path) {
             sensor.camera.fov_half_deg = getD(cam, "fov_half_deg", sensor.camera.fov_half_deg);
             sensor.camera.output_in_camera_frame = getB(cam, "output_in_camera_frame", false);
         }
+        if (const YAML::Node pnp = sen["pnp"]) {
+            sensor.pnp.enabled = getB(pnp, "enabled", sensor.pnp.enabled);
+            sensor.pnp.pixel_sigma = getD(pnp, "pixel_sigma", sensor.pnp.pixel_sigma);
+            sensor.pnp.fx = getD(pnp, "fx", sensor.pnp.fx);
+            sensor.pnp.fy = getD(pnp, "fy", sensor.pnp.fy);
+            sensor.pnp.cx = getD(pnp, "cx", sensor.pnp.cx);
+            sensor.pnp.cy = getD(pnp, "cy", sensor.pnp.cy);
+            sensor.pnp.k1 = getD(pnp, "k1", sensor.pnp.k1);
+            sensor.pnp.k2 = getD(pnp, "k2", sensor.pnp.k2);
+            sensor.pnp.p1 = getD(pnp, "p1", sensor.pnp.p1);
+            sensor.pnp.p2 = getD(pnp, "p2", sensor.pnp.p2);
+            sensor.pnp.k3 = getD(pnp, "k3", sensor.pnp.k3);
+            sensor.pnp.armor_width = getD(pnp, "armor_width", sensor.pnp.armor_width);
+            sensor.pnp.armor_height = getD(pnp, "armor_height", sensor.pnp.armor_height);
+        }
     }
     setup.sensor = sensor;
 

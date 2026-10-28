@@ -17,6 +17,7 @@
 #include "kf/imm.hpp"
 #include "kf/fusion.hpp"
 #include "kf/models/cv.hpp"
+#include "kf/models/ca.hpp"
 #include "kf/cv_imm.hpp"
 #include "kf/models/plate_cv.hpp"
 #include "sim/config.hpp"
@@ -34,6 +35,7 @@ const std::string keys =
 namespace {
 
 int g_armor_id = 0;
+int g_armor_num = 4;
 
 struct Spec {
     std::string name;
@@ -42,6 +44,10 @@ struct Spec {
     double q_yaw = 75.0;
     double q_xyz2 = 400.0;
     double q_yaw2 = 300.0;
+    double q_jerk = 200.0;
+    double ca_tau = 0.0;
+    double p0_accel_var = 25.0;
+    std::vector<double> mu0;
     double plate_v = 2.0;
     double plate_w = 2.0;
     double armor_radius = 0.22;
@@ -58,6 +64,12 @@ Spec parseSpec(const YAML::Node& n) {
     if (n["q_yaw"]) s.q_yaw = n["q_yaw"].as<double>();
     if (n["q_xyz2"]) s.q_xyz2 = n["q_xyz2"].as<double>();
     if (n["q_yaw2"]) s.q_yaw2 = n["q_yaw2"].as<double>();
+    if (n["q_jerk"]) s.q_jerk = n["q_jerk"].as<double>();
+    if (n["ca_tau"]) s.ca_tau = n["ca_tau"].as<double>();
+    if (n["p0_accel_var"]) s.p0_accel_var = n["p0_accel_var"].as<double>();
+    if (n["mu0"]) {
+        for (const auto& v : n["mu0"]) s.mu0.push_back(v.as<double>());
+    }
     if (n["plate_v"]) s.plate_v = n["plate_v"].as<double>();
     if (n["plate_w"]) s.plate_w = n["plate_w"].as<double>();
     if (n["pi"]) {
@@ -90,6 +102,20 @@ std::unique_ptr<kf::IFilter> makeLeaf(const Spec& s, const Eigen::Vector3d& z,
     if (s.type == "plate") {
         kf::PlateCvParams p; p.sigma_v = s.plate_v; p.sigma_w = s.plate_w; p.R = R;
         auto f = std::make_unique<kf::PlateCvKalman>(p);
+        f->init(z, v);
+        f->setMeasurementNoise(R);
+        return f;
+    }
+    if (s.type == "ca") {
+        kf::CaParams p;
+        p.q_jerk = s.q_jerk;
+        p.q_yaw = s.q_yaw;
+        p.ca_tau = s.ca_tau;
+        p.p0_accel_var = s.p0_accel_var;
+        p.armor_radius = s.armor_radius;
+        p.armor_id = g_armor_id;
+        p.R = R;
+        auto f = std::make_unique<kf::CaKalman>(p);
         f->init(z, v);
         f->setMeasurementNoise(R);
         return f;
@@ -154,15 +180,30 @@ Runner makeRunner(const Spec& s, const Eigen::Vector3d& z, const Eigen::Vector3d
             Pi(i, j) = (i == j) ? p : (1.0 - p) / static_cast<double>(n - 1);
         }
     }
-    const Eigen::VectorXd mu = Eigen::VectorXd::Constant(n, 1.0 / n);
+    Eigen::VectorXd mu = Eigen::VectorXd::Constant(n, 1.0 / n);
+    if (static_cast<int>(s.mu0.size()) == n) {
+        for (int i = 0; i < n; ++i) mu[i] = s.mu0[static_cast<std::size_t>(i)];
+        if (mu.sum() > 0.0) mu /= mu.sum();
+    }
 
-    r.imm = std::make_unique<kf::Imm>(std::move(models), Pi, mu);
+    // 整车 CV/CA 的 yaw 在下标 6。板模型不要传这个下标。
+    r.imm = std::make_unique<kf::Imm>(std::move(models), Pi, mu, std::vector<int>{6});
     r.is_imm = true;
     return r;
 }
 
 Eigen::Vector3d runnerPosition(const Runner& r) {
-    if (r.is_imm) return r.imm->state().head<3>();
+    if (r.is_imm) {
+        // IMM 的“状态平均”在非线性板几何上会出问题：CV/CA 可能用不同的
+        // center/yaw/r 组合表示同一块板，平均 state 后板位置会被拉偏。
+        // 评估时按模型概率对各自的板位置加权，而不是对 state 加权。
+        const Eigen::VectorXd mu = r.imm->probabilities();
+        Eigen::Vector3d p = Eigen::Vector3d::Zero();
+        for (int i = 0; i < r.imm->modelCount(); ++i) {
+            p += mu[i] * r.imm->model(i).filter->position();
+        }
+        return p;
+    }
     return r.single->position();
 }
 
@@ -216,6 +257,7 @@ int main(int argc, char* argv[]) {
         int locked = sensor.pickArmor(sim.truth());
         if (locked < 0) locked = 0;
         g_armor_id = locked;
+        g_armor_num = setup.geometry.armor_count;
 
         const double min_interval = [&] {
             if (!setup.sensor.intervals.empty()) {

@@ -17,21 +17,16 @@ namespace kf {
 
 /// 交互式多模型（IMM）。
 ///
-/// 维度不同时，把每个模型的状态嵌入到公共空间（取各模型维度的最大值）：
-///   E_i : 公共空间 ← 模型 i（对角单位块，其余补 0）
-/// 混合和组合都在公共空间做，再投影回各模型自己的维度。
+/// 维度不同时按「谁拥有这一维」混合，不把小模型没有的状态补成均值 0、方差 0。
+/// 例如 CV(11) 与 CA(14)：共享的前 11 维一起混合；加速度只来自 CA。
+/// angle_indices 里的分量按圆周均值混合（整车模型的 yaw 在下标 6）。
 ///
 /// 一个周期：
-///   1) 混合：由上一拍的模型概率 μ 和转移矩阵 Π 算混合初值
-///        c_j     = Σ_i p_ij μ_i
-///        μ_{i|j} = p_ij μ_i / c_j
-///        x⁰_j    = Σ_i μ_{i|j} E_i x_i
-///        P⁰_j    = Σ_i μ_{i|j} [E_i P_i E_iᵀ + (E_i x_i−x⁰_j)(…)ᵀ]
-///   2) 每个模型从 E_jᵀ x⁰_j 出发 predict
+///   1) 混合：c_j = Σ_i π_{ij} μ_i，μ_{i|j} = π_{ij} μ_i / c_j
+///      某一维只在拥有它的模型之间重新归一后做均值和协方差
+///   2) 每个模型从自己的混合初值出发 predict
 ///   3) 每个模型 update，用似然更新权重
-///   4) 组合输出（公共空间）
-///        x = Σ_j μ_j E_j x_j
-///        P = Σ_j μ_j [E_j P_j E_jᵀ + (E_j x_j−x)(…)ᵀ]
+///   4) 组合输出，同样只在拥有该维的模型之间归一
 class Imm {
 public:
     struct Model {
@@ -39,8 +34,9 @@ public:
         std::unique_ptr<IFilter> filter;
     };
 
+    /// angle_indices：按角度混合的状态下标。板模型的角速度不是角度，保持空。
     Imm(std::vector<Model> models, const Eigen::MatrixXd& transition,
-        const Eigen::VectorXd& initial_probs);
+        const Eigen::VectorXd& initial_probs, std::vector<int> angle_indices = {});
 
     /// 混合 + 每个模型预测。
     void predict(double dt);
@@ -77,17 +73,98 @@ private:
     Eigen::VectorXd x_;
     Eigen::MatrixXd P_;
     int nx_common_ = 0;
+    std::vector<int> dims_;
+    std::vector<int> angles_;
     std::vector<Eigen::MatrixXd> emb_;  ///< E_i：公共空间 × 模型 i 维度
     bool mixed_ = false;
+
+    [[nodiscard]] bool angleIndex(int k) const;
+    static double wrapTo(double a, double ref);
+
+    /// weight 与模型一一对应，不必预先归一。dim 是输出维度。
+    void mixGaussian(const std::vector<double>& weight, int dim,
+                     const std::vector<Eigen::VectorXd>& xs, const std::vector<Eigen::MatrixXd>& Ps,
+                     Eigen::VectorXd& x0, Eigen::MatrixXd& P0) const;
 };
 
 // ---------------------------------------------------------------------------
 // 实现
 // ---------------------------------------------------------------------------
 
+inline bool Imm::angleIndex(int k) const {
+    return std::find(angles_.begin(), angles_.end(), k) != angles_.end();
+}
+
+inline double Imm::wrapTo(double a, double ref) {
+    return ref + std::atan2(std::sin(a - ref), std::cos(a - ref));
+}
+
+inline void Imm::mixGaussian(const std::vector<double>& weight, int dim,
+                             const std::vector<Eigen::VectorXd>& xs,
+                             const std::vector<Eigen::MatrixXd>& Ps, Eigen::VectorXd& x0,
+                             Eigen::MatrixXd& P0) const {
+    const int r = modelCount();
+    x0 = Eigen::VectorXd::Zero(dim);
+    P0 = Eigen::MatrixXd::Zero(dim, dim);
+
+    for (int k = 0; k < dim; ++k) {
+        double ws = 0.0;
+        double acc = 0.0;
+        if (!angleIndex(k)) {
+            for (int i = 0; i < r; ++i) {
+                if (dims_[static_cast<std::size_t>(i)] <= k) continue;
+                ws += weight[static_cast<std::size_t>(i)];
+                acc += weight[static_cast<std::size_t>(i)] * xs[static_cast<std::size_t>(i)][k];
+            }
+            x0[k] = acc / std::max(ws, 1e-300);
+            continue;
+        }
+        double ref = 0.0;
+        double best = -1.0;
+        for (int i = 0; i < r; ++i) {
+            if (dims_[static_cast<std::size_t>(i)] <= k) continue;
+            if (weight[static_cast<std::size_t>(i)] > best) {
+                best = weight[static_cast<std::size_t>(i)];
+                ref = xs[static_cast<std::size_t>(i)][k];
+            }
+        }
+        for (int i = 0; i < r; ++i) {
+            if (dims_[static_cast<std::size_t>(i)] <= k) continue;
+            ws += weight[static_cast<std::size_t>(i)];
+            acc += weight[static_cast<std::size_t>(i)] * wrapTo(xs[static_cast<std::size_t>(i)][k], ref);
+        }
+        const double mean = acc / std::max(ws, 1e-300);
+        x0[k] = std::atan2(std::sin(mean), std::cos(mean));
+    }
+
+    for (int a = 0; a < dim; ++a) {
+        for (int b = a; b < dim; ++b) {
+            const int need = std::max(a, b);
+            double ws = 0.0;
+            for (int i = 0; i < r; ++i) {
+                if (dims_[static_cast<std::size_t>(i)] > need) ws += weight[static_cast<std::size_t>(i)];
+            }
+            ws = std::max(ws, 1e-300);
+            double pab = 0.0;
+            for (int i = 0; i < r; ++i) {
+                if (dims_[static_cast<std::size_t>(i)] <= need) continue;
+                const double wi = weight[static_cast<std::size_t>(i)] / ws;
+                double dxi = xs[static_cast<std::size_t>(i)][a] - x0[a];
+                double dxj = xs[static_cast<std::size_t>(i)][b] - x0[b];
+                if (angleIndex(a)) dxi = wrapTo(xs[static_cast<std::size_t>(i)][a], x0[a]) - x0[a];
+                if (angleIndex(b)) dxj = wrapTo(xs[static_cast<std::size_t>(i)][b], x0[b]) - x0[b];
+                pab += wi * (Ps[static_cast<std::size_t>(i)](a, b) + dxi * dxj);
+            }
+            P0(a, b) = pab;
+            P0(b, a) = pab;
+        }
+    }
+}
+
 inline Imm::Imm(std::vector<Model> models, const Eigen::MatrixXd& transition,
-                const Eigen::VectorXd& initial_probs)
-    : models_(std::move(models)), transition_(transition), mu_(initial_probs) {
+                const Eigen::VectorXd& initial_probs, std::vector<int> angle_indices)
+    : models_(std::move(models)), transition_(transition), mu_(initial_probs),
+      angles_(std::move(angle_indices)) {
     if (models_.empty()) throw std::invalid_argument("Imm: 至少需要一个模型");
 
     const int r = modelCount();
@@ -105,12 +182,17 @@ inline Imm::Imm(std::vector<Model> models, const Eigen::MatrixXd& transition,
         nx_common_ = std::max(nx_common_, m.filter->stateDim());
     }
 
+    dims_.resize(static_cast<std::size_t>(r));
     emb_.resize(static_cast<std::size_t>(r));
     for (int i = 0; i < r; ++i) {
         const int d = models_[static_cast<std::size_t>(i)].filter->stateDim();
+        dims_[static_cast<std::size_t>(i)] = d;
         Eigen::MatrixXd E = Eigen::MatrixXd::Zero(nx_common_, d);
         E.topLeftCorner(d, d).setIdentity();
         emb_[static_cast<std::size_t>(i)] = std::move(E);
+    }
+    for (int k : angles_) {
+        if (k < 0 || k >= nx_common_) throw std::invalid_argument("Imm: 角度下标越界");
     }
 
     c_ = Eigen::VectorXd::Ones(r);
@@ -128,48 +210,26 @@ inline void Imm::predict(double dt) {
         for (int i = 0; i < r; ++i) c_[j] += transition_(i, j) * mu_[i];
     }
 
-    // 2) 收齐原始状态并嵌入公共空间（先全部读完，避免边算边写造成互相污染）
+    // 2) 先读完各模型状态，再混合。没有的维度不参与，避免补 0 把加速度拉回原点。
     std::vector<Eigen::VectorXd> xs(static_cast<std::size_t>(r));
     std::vector<Eigen::MatrixXd> Ps(static_cast<std::size_t>(r));
-    std::vector<Eigen::VectorXd> xc(static_cast<std::size_t>(r));
-    std::vector<Eigen::MatrixXd> Pc(static_cast<std::size_t>(r));
     for (int i = 0; i < r; ++i) {
         const auto k = static_cast<std::size_t>(i);
         xs[k] = models_[k].filter->state();
         Ps[k] = models_[k].filter->covariance();
-        xc[k] = emb_[k] * xs[k];
-        Pc[k] = emb_[k] * Ps[k] * emb_[k].transpose();
     }
 
-    // 3) 在公共空间算混合初值
-    std::vector<Eigen::VectorXd> mixed_x(static_cast<std::size_t>(r));
-    std::vector<Eigen::MatrixXd> mixed_P(static_cast<std::size_t>(r));
+    std::vector<double> weight(static_cast<std::size_t>(r));
     for (int j = 0; j < r; ++j) {
         const double cj = std::max(c_[j], 1e-300);
-
-        Eigen::VectorXd x0 = Eigen::VectorXd::Zero(nx_common_);
         for (int i = 0; i < r; ++i) {
-            x0 += (transition_(i, j) * mu_[i] / cj) * xc[static_cast<std::size_t>(i)];
+            weight[static_cast<std::size_t>(i)] = transition_(i, j) * mu_[i] / cj;
         }
-
-        Eigen::MatrixXd P0 = Eigen::MatrixXd::Zero(nx_common_, nx_common_);
-        for (int i = 0; i < r; ++i) {
-            const double w = transition_(i, j) * mu_[i] / cj;
-            const Eigen::VectorXd dx = xc[static_cast<std::size_t>(i)] - x0;
-            P0 += w * (Pc[static_cast<std::size_t>(i)] + dx * dx.transpose());
-        }
-
-        mixed_x[static_cast<std::size_t>(j)] = std::move(x0);
-        mixed_P[static_cast<std::size_t>(j)] = std::move(P0);
-    }
-
-    // 4) 投影回各模型维度，再预测
-    for (int j = 0; j < r; ++j) {
-        const auto k = static_cast<std::size_t>(j);
-        const Eigen::VectorXd x0 = emb_[k].transpose() * mixed_x[k];
-        const Eigen::MatrixXd P0 = emb_[k].transpose() * mixed_P[k] * emb_[k];
-        models_[k].filter->setState(x0, P0);
-        models_[k].filter->predict(dt);
+        Eigen::VectorXd x0;
+        Eigen::MatrixXd P0;
+        mixGaussian(weight, dims_[static_cast<std::size_t>(j)], xs, Ps, x0, P0);
+        models_[static_cast<std::size_t>(j)].filter->setState(x0, P0);
+        models_[static_cast<std::size_t>(j)].filter->predict(dt);
     }
 
     mixed_ = true;
@@ -198,21 +258,17 @@ inline void Imm::update(const Eigen::VectorXd& z) {
         mu_ = w / w.sum();
     }
 
-    // 3) 公共空间组合
-    x_.setZero(nx_common_);
+    // 3) 组合。某一维只在拥有它的模型之间归一，yaw 走圆周均值。
+    std::vector<Eigen::VectorXd> xs(static_cast<std::size_t>(r));
+    std::vector<Eigen::MatrixXd> Ps(static_cast<std::size_t>(r));
+    std::vector<double> weight(static_cast<std::size_t>(r));
     for (int j = 0; j < r; ++j) {
         const auto k = static_cast<std::size_t>(j);
-        x_ += mu_[j] * (emb_[k] * models_[k].filter->state());
+        xs[k] = models_[k].filter->state();
+        Ps[k] = models_[k].filter->covariance();
+        weight[k] = mu_[j];
     }
-
-    P_.setZero(nx_common_, nx_common_);
-    for (int j = 0; j < r; ++j) {
-        const auto k = static_cast<std::size_t>(j);
-        const Eigen::VectorXd xj = emb_[k] * models_[k].filter->state();
-        const Eigen::MatrixXd Pj = emb_[k] * models_[k].filter->covariance() * emb_[k].transpose();
-        const Eigen::VectorXd dx = xj - x_;
-        P_ += mu_[j] * (Pj + dx * dx.transpose());
-    }
+    mixGaussian(weight, nx_common_, xs, Ps, x_, P_);
 
     mixed_ = false;
 }

@@ -1,0 +1,23 @@
+# CV + CA IMM 对比（椭圆巡航 + 小陀螺场景）
+# 说明：CA 状态比 CV 多 ax/ay/az 三个平移加速度；IMM 公共空间 14 维，
+# CV 的 11 维嵌到前 11 维，CA 直接 14 维。
+sim: configs/sim/rm_ellipse_spin.yaml
+duration: 16.0
+warmup: 25
+measurement_sigma: 0.02
+output:
+  csv: build/kf/compare_cv_ca_imm_ellipse.csv
+  png: build/kf/compare_cv_ca_imm_ellipse.png
+
+models:
+  - {name: "CV", type: cv, q_xyz: 100, q_yaw: 75}
+
+  - {name: "CA", type: ca, q_yaw: 75, q_jerk: 800, ca_tau: 0, p0_accel_var: 25}
+
+  - name: "CV+CA IMM"
+    type: imm
+    pi: [0.98, 0.95]       # 两个模型的自保留概率
+    mu0: [0.7, 0.3]        # 短接敌先验：先信 CV，CA 权重较低
+    models:
+      - {type: cv, q_xyz: 100, q_yaw: 75}
+      - {type: ca, q_yaw: 75, q_jerk: 800, ca_tau: 0, p0_accel_var: 25}

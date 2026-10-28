@@ -33,8 +33,8 @@ add_library(sim_core STATIC
     src/motion/preset.cpp
     src/sensing/sensor.cpp
 )
-target_include_directories(sim_core PUBLIC include)
-target_link_libraries(sim_core PUBLIC Eigen3::Eigen PRIVATE ${YAML_CPP_TARGET})
+target_include_directories(sim_core PUBLIC include ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(sim_core PUBLIC Eigen3::Eigen ${OpenCV_LIBS} PRIVATE ${YAML_CPP_TARGET})
 target_compile_options(sim_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(kf_future apps/kf_future.cpp)
@@ -44,6 +44,10 @@ target_compile_options(kf_future PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(kf_ypd_compare apps/kf_ypd_compare.cpp)
 target_link_libraries(kf_ypd_compare PRIVATE sim_core kf_core)
+
+add_executable(kf_pnp_cov apps/kf_pnp_cov.cpp)
+target_link_libraries(kf_pnp_cov PRIVATE sim_core kf_core ${YAML_CPP_TARGET})
+target_compile_options(kf_pnp_cov PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(kf_param_robust apps/kf_param_robust.cpp)
 target_link_libraries(kf_param_robust PRIVATE sim_core kf_core)
@@ -62,6 +66,18 @@ add_executable(kf_compare apps/kf_compare.cpp)
 target_link_libraries(kf_compare PRIVATE sim_core kf_core ${YAML_CPP_TARGET} ${OpenCV_LIBS})
 target_include_directories(kf_compare PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_compile_options(kf_compare PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(rts_compare apps/rts_compare.cpp)
+target_link_libraries(rts_compare PRIVATE sim_core kf_core ${YAML_CPP_TARGET})
+target_compile_options(rts_compare PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(rts_params apps/rts_params.cpp)
+target_link_libraries(rts_params PRIVATE sim_core kf_core ${YAML_CPP_TARGET})
+target_compile_options(rts_params PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(rts_geom apps/rts_geom.cpp)
+target_link_libraries(rts_geom PRIVATE sim_core kf_core ${YAML_CPP_TARGET})
+target_compile_options(rts_geom PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(sim_contract_test tests/sim_contract_test.cpp)
 target_link_libraries(sim_contract_test PRIVATE sim_core)

@@ -106,14 +106,19 @@ private:
 
         for (int j = 0; j < 2; ++j) {
             Eigen::VectorXd x0 = Eigen::VectorXd::Zero(11);
-            Eigen::MatrixXd P0 = Eigen::MatrixXd::Zero(11, 11);
             for (int i = 0; i < 2; ++i) {
                 const double w = Pi_(i, j) * mu_[i] / std::max(c_[j], 1e-300);
                 x0 += w * xs[i];
-                const Eigen::VectorXd dx = xs[i] - x0;
-                P0 += w * (Ps[i] + dx * dx.transpose());
             }
             x0[6] = wrap(x0[6]);
+            Eigen::MatrixXd P0 = Eigen::MatrixXd::Zero(11, 11);
+            for (int i = 0; i < 2; ++i) {
+                const double w = Pi_(i, j) * mu_[i] / std::max(c_[j], 1e-300);
+                Eigen::VectorXd xi = xs[i];
+                xi[6] = alignTo(xs[i][6], x0[6]);
+                const Eigen::VectorXd dx = xi - x0;
+                P0 += w * (Ps[i] + dx * dx.transpose());
+            }
             models_[j].setState(x0, P0);
         }
     }

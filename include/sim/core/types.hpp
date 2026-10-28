@@ -145,6 +145,9 @@ struct Observation {
     Mat3 R_pos = Mat3::Identity();
     double R_n = 0.0;  ///< 法向角噪声方差 [rad²]
     bool in_camera_frame = false;
+    /// PnP 打开时：z = [yaw, pitch, distance, armor_yaw] 的协方差。armor_yaw 取内向角。
+    bool has_ypd_cov = false;
+    Eigen::Matrix4d R_ypd = Eigen::Matrix4d::Zero();
 };
 
 /// 仅用于评估 / 调试的旁注。**滤波器禁止读取**。
